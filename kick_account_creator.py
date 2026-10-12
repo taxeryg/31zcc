@@ -24,7 +24,11 @@ from datetime import date, timedelta
 from typing import Callable, Optional
 
 import requests
-from DrissionPage import ChromiumOptions, ChromiumPage
+try:
+    from DrissionPage import ChromiumOptions, ChromiumPage
+except ImportError:
+    ChromiumOptions = None
+    ChromiumPage = None
 
 import storage
 
@@ -562,13 +566,19 @@ class KickAccountCreatorSession:
             mode_str = "arka planda (headless)" if headless else "görünür pencerede"
             self.log("info", f"Anti-Detect Chrome {mode_str} başlatılıyor...")
 
+            if ChromiumPage is None:
+                self.log("error", "DrissionPage kütüphanesi veya tarayıcı ortamı bu sunucuda bulunamadı.")
+                self.status = "error"
+                return
+
             co = ChromiumOptions()
             co.headless(headless)
             co.set_argument("--window-size=1920,1080")
             co.set_argument("--no-first-run")
             co.set_argument("--no-default-browser-check")
             co.set_argument("--disable-blink-features=AutomationControlled")
-            co.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+            if os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+                co.set_browser_path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
             if proxy_arg:
                 co.set_proxy(proxy_arg)
 
