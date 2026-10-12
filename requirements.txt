@@ -1,0 +1,11 @@
+flask
+flask-socketio
+websocket-client
+cryptography
+openai
+python-dotenv
+eventlet
+requests
+websockets
+fake-useragent
+tls-client

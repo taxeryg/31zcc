@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaxerAI Bot Dashboard</title>
+  <meta name="description" content="Developed by Taxeryg">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+
+<body>
+  <div id="app">
+
+    <!-- ═══ HEADER ═══ -->
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">🤖</div>
+        <span>TaxerAI <span class="glow-text">Bot</span></span>
+      </div>
+
+      <!-- Küçük Kick bağlantı ikonu (tıklayınca modal açılır) -->
+      <div id="kick-mini-pill" onclick="openKickSetupModal()" title="Kick Kanalı Değiştir" style="
+        display:flex;align-items:center;gap:8px;
+        margin-left:16px;
+        background:rgba(83,252,24,0.08);
+        border:1px solid rgba(83,252,24,0.25);
+        border-radius:20px;
+        padding:5px 14px 5px 8px;
+        cursor:pointer;
+        transition:all 0.2s;
+        user-select:none;
+      " onmouseover="this.style.background='rgba(83,252,24,0.16)'" onmouseout="this.style.background='rgba(83,252,24,0.08)'">
+        <div style="
+          width:26px;height:26px;border-radius:8px;
+          background:linear-gradient(135deg,#53fc18,#1e8a04);
+          display:flex;align-items:center;justify-content:center;
+          font-size:14px;flex-shrink:0;
+          box-shadow:0 2px 8px rgba(83,252,24,0.3);
+        ">🎯</div>
+        <div style="line-height:1.2;">
+          <div style="font-size:10px;color:#53fc18;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;">Kick Chat</div>
+          <div id="kick-mini-channel" style="font-size:12px;color:#fff;font-weight:600;">Bağlı Değil</div>
+        </div>
+        <div id="kick-mini-dot" style="
+          width:8px;height:8px;border-radius:50%;background:#555;
+          margin-left:4px;transition:background 0.3s;
+        "></div>
+      </div>
+
+      <div class="header-spacer"></div>
+
+      <button class="pipeline-toggle-btn active" id="pipeline-btn" onclick="togglePipeline()">⚡ Otomatik Yanıt:
+        Aktif</button>
+
+      <div class="status-pill" onclick="switchTab('chat')">
+        <div class="status-dot" id="status-dot"></div>
+        <span id="status-text">Bağlı değil</span>
+      </div>
+    </header>
+
+    <!-- ═══ MAIN BODY ═══ -->
+    <div class="main-body">
+
+      <!-- SIDEBAR -->
+      <nav class="sidebar">
+        <div class="nav-item active" id="nav-chat" onclick="switchTab('chat')" title="Chat">
+          <span class="nav-icon">💬</span>
+        </div>
+        <div class="nav-item" id="nav-bots" onclick="switchTab('bots')" title="Botlar">
+          <span class="nav-icon">🤖</span>
+        </div>
+        <div class="nav-item" id="nav-tokens" onclick="switchTab('tokens')" title="Token Yönetimi">
+          <span class="nav-icon">🔑</span>
+        </div>
+        <div class="nav-item" id="nav-logs" onclick="switchTab('logs');loadLogs()" title="Loglar">
+          <span class="nav-icon">📋</span>
+        </div>
+        <div class="nav-item" id="nav-bearer-test" onclick="switchTab('bearer-test')" title="Toplu Token Testi">
+          <span class="nav-icon">🧪</span>
+        </div>
+        <div class="nav-item" id="nav-hesapolustur" onclick="switchTab('hesapolustur')" title="Hesap Oluştur">
+          <span class="nav-icon">👤➕</span>
+        </div>
+        <div class="nav-item" id="nav-viewbot" onclick="switchTab('viewbot')" title="ViewBot">
+          <span class="nav-icon">👁️</span>
+        </div>
+        <div class="nav-item" id="nav-follow" onclick="switchTab('follow')" title="Takipçi Gönder">
+          <span class="nav-icon">👤⚡</span>
+        </div>
+      </nav>
+
+      <!-- CONTENT -->
+      <div class="content">
+
+        <!-- ─── TAB: CHAT ─── -->
+        <div class="tab-pane active" id="tab-chat">
+          <div class="chat-layout" style="width:100%">
+
+            <!-- Chat main -->
+            <div class="chat-main">
+              <div id="chat-messages" class="chat-messages">
+                <div style="padding:24px;text-align:center;color:var(--text3)">
+                  <div style="font-size:2rem;margin-bottom:8px">💬</div>
+                  <div>Kanala bağlanınca mesajlar burada görünecek</div>
+                </div>
+              </div>
+
+              <!-- Manual send -->
+              <div class="chat-input-area">
+                <div style="font-size:0.75rem;color:var(--text3);margin-bottom:6px">Manuel mesaj gönder</div>
+                <div class="chat-input-row">
+                  <select id="manual-account-select">
+                    <option value="">— Hesap seç —</option>
+                  </select>
+                  <input id="manual-msg-input" type="text" placeholder="Mesaj yaz… (Enter ile gönder)" style="flex:1">
+                  <button class="btn btn-cyan btn-sm" onclick="sendManualMessage()">Gönder ↗</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Otomatik Bot Yanıt Akışı paneli -->
+            <div class="pipeline-panel">
+              <div class="card-header" style="background:var(--bg3)">
+                <div class="card-title">⚙️ Otomatik Yanıt Akışı</div>
+                <span class="badge badge-purple text-xs" id="pipeline-status-badge">Aktif</span>
+              </div>
+              <div class="pipeline-info-box">
+                💡 <strong>Otomatik Bot Yanıt Sistemi Nedir?</strong><br>
+                Kick chatindeki mesajları canlı dinler, spam/flood filtresinden geçirir, en uygun AI bot karakterini
+                seçer ve yapay zeka ile otomatik cevap üreterek chate gönderir.
+              </div>
+              <div id="pipeline-events" class="pipeline-events">
+                <div style="padding:16px;text-align:center;color:var(--text3);font-size:0.8rem">
+                  Mesajlar geldikçe AI kararları ve otomatik yanıtlar burada görünür
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ─── TAB: BOTS ─── -->
+        <div class="tab-pane" id="tab-bots">
+          <div class="page-section" style="width:100%">
+            <div style="display:flex;align-items:center;justify-content:space-between">
+              <h1 class="section-title">🤖 Bot Karakterleri</h1>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" onclick="resetDailyCounters()"
+                  title="Tüm botların bugün gönderdiği mesaj sayılarını sıfırlar">🔄 Günlük Sayaçları Sıfırla</button>
+                <button class="btn btn-primary btn-sm" onclick="openBotEditor(null)">+ Yeni Bot</button>
+              </div>
+            </div>
+
+            <div id="bots-grid" class="bots-grid">
+              <div class="text-muted text-sm">Yükleniyor…</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── TAB: TOKENS ─── -->
+        <div class="tab-pane" id="tab-tokens">
+          <div class="page-section" style="width:100%">
+
+            <!-- AI Tokens -->
+            <div>
+              <h1 class="section-title">🧠 AI Token Yönetimi</h1>
+
+              <div class="add-section" style="margin-bottom:16px">
+                <div class="add-section-title">+ Yeni AI Token Ekle</div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Token Adı</label>
+                    <input id="ai-name" type="text" placeholder="Örn: GPT-4o-mini Ana">
+                  </div>
+                  <div class="form-group">
+                    <label>Model</label>
+                    <input id="ai-model" type="text" value="gpt-4o-mini" placeholder="gpt-4o-mini">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label>API Base URL</label>
+                  <input id="ai-base-url" type="text" value="https://api.openai.com/v1"
+                    placeholder="https://api.openai.com/v1">
+                </div>
+                <div class="form-group">
+                  <label>API Key (Bearer Token)</label>
+                  <input id="ai-token" type="password" placeholder="sk-… veya başka API anahtarı">
+                </div>
+                <button class="btn btn-primary" onclick="addAiToken()">+ Ekle</button>
+              </div>
+
+              <div id="ai-tokens-list" class="tokens-grid">
+                <div class="text-muted text-sm">Yükleniyor…</div>
+              </div>
+            </div>
+
+            <div class="divider"></div>
+
+            <!-- Kick Accounts -->
+            <div>
+              <h1 class="section-title">🎮 Kick Hesapları (Chat Gönderim)</h1>
+              <p class="text-muted text-sm" style="margin-bottom:12px">
+                Botların Kick chat'e mesaj göndermesi için Bearer tokenlarını buraya ekleyin. Tokenlar şifreli saklanır.
+              </p>
+
+              <!-- Toplu Ekleme -->
+              <div class="add-section" style="margin-bottom:16px;border-color:var(--cyan)">
+                <div class="add-section-title" style="color:var(--cyan)">⚡ Toplu Hesap Ekle (Otomatik Kullanıcı Adı)</div>
+                <p class="text-xs text-dim" style="margin-bottom:10px">
+                  Alt alta Bearer tokenları yapıştırın → Kick API'den kullanıcı adı çekilir → Chata mesaj gönderilir → Otomatik kaydedilir.
+                </p>
+                <div class="form-group">
+                  <label>Bearer Tokenlar (her satıra 1 token):</label>
+                  <textarea id="kick-bulk-tokens" rows="5" class="form-control"
+                    placeholder="Bearer_token_1&#10;Bearer_token_2&#10;Bearer_token_3..."
+                    style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:10px;font-family:monospace;font-size:0.83rem;resize:vertical"></textarea>
+                </div>
+                <div class="form-row" style="margin-top:10px;gap:12px;align-items:flex-end">
+                  <div class="form-group" style="margin-bottom:0;flex:1">
+                    <label>Chata gönderilecek test mesajı (isteğe bağlı):</label>
+                    <input id="kick-bulk-msg" type="text" value="31" placeholder="31">
+                  </div>
+                  <button class="btn btn-cyan" id="btn-bulk-add" onclick="bulkAddKickAccounts()" style="white-space:nowrap">⚡ Toplu Ekle</button>
+                </div>
+                <div id="kick-bulk-results" style="display:none;margin-top:14px;display:none;flex-direction:column;gap:6px"></div>
+              </div>
+
+              <!-- Tekli Ekleme -->
+              <div class="add-section" style="margin-bottom:16px">
+                <div class="add-section-title">+ Tek Hesap Ekle</div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>Kullanıcı Adı</label>
+                    <input id="kick-username" type="text" placeholder="kick_kullanici_adi">
+                  </div>
+                  <div class="form-group">
+                    <label>Bearer Token</label>
+                    <input id="kick-token" type="password" placeholder="Bearer token (şifreli saklanır)">
+                  </div>
+                </div>
+                <button class="btn btn-cyan" onclick="addKickAccount()">+ Ekle</button>
+              </div>
+
+              <div id="kick-accounts-list" style="display:flex;flex-direction:column;gap:8px">
+                <div class="text-muted text-sm">Yükleniyor…</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ─── TAB: LOGS ─── -->
+        <div class="tab-pane" id="tab-logs">
+          <div style="display:flex;flex-direction:column;height:100%;width:100%;overflow:hidden">
+
+            <div
+              style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border2)">
+              <h1 style="font-size:0.95rem;font-weight:700;display:flex;align-items:center;gap:8px">📋 Mesaj Logları
+              </h1>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" onclick="loadLogs()">🔄 Yenile</button>
+                <button class="btn btn-danger btn-sm" onclick="clearLogs()">🗑 Temizle</button>
+              </div>
+            </div>
+
+            <div class="logs-header">
+              <span>Tür</span>
+              <span>Kullanıcı</span>
+              <span>Bot</span>
+              <span>Mesaj</span>
+              <span>Durum</span>
+              <span>Saat</span>
+            </div>
+
+            <div id="logs-body" class="logs-container">
+              <div class="text-muted text-sm" style="padding:12px">Loglar için "Yenile" butonuna tıkla</div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ─── TAB: BEARER TOKEN BATCH TEST ─── -->
+        <div class="tab-pane" id="tab-bearer-test">
+          <div style="max-width:800px;margin:0 auto">
+            <h1 class="section-title">🧪 Toplu Kick Bearer Token Testi</h1>
+            <p class="text-dim text-sm mb-16">
+              Alt alta birden fazla Kick Bearer Token yapıştırın. Teste basıldığında aktif girili chat odasına sırayla <strong>"31"</strong> mesajı gönderilecek ve çalışıp çalışmadığı anında raporda gösterilecektir!
+            </p>
+
+            <div class="card p-20 mb-20">
+              <div class="form-group">
+                <label>Kick Bearer Tokenlar (Her satıra 1 tane token yapıştırın):</label>
+                <textarea id="batch-tokens-input" rows="8" class="form-control" placeholder="Bearer_token_1&#10;Bearer_token_2&#10;Bearer_token_3..." style="width:100%;background:var(--bg3);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:12px;font-family:monospace;font-size:0.85rem;resize:vertical"></textarea>
+              </div>
+
+              <div class="form-group mt-12">
+                <label>Gönderilecek Mesaj:</label>
+                <input id="batch-test-msg" type="text" value="31" class="form-control" style="width:200px">
+              </div>
+
+              <button class="btn btn-primary mt-16" id="btn-run-bearer-test" onclick="runBatchTokenTest()">⚡ Toplu Testi Başlat (Chata "31" Gönder)</button>
+            </div>
+
+            <div class="card p-20" id="bearer-test-results-card" style="display:none">
+              <h3 style="font-size:1rem;margin-bottom:12px">📊 Test Sonuçları Raporu</h3>
+
+              <!-- Özet -->
+              <div id="bearer-test-summary" style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap"></div>
+
+              <!-- Başarılı bölümü -->
+              <div id="bearer-ok-section" style="display:none;margin-bottom:16px">
+                <div style="font-size:0.82rem;font-weight:700;color:var(--accent);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+                  ✅ Başarılı Tokenlar <span id="bearer-ok-count" class="badge badge-green" style="font-size:0.7rem">0</span>
+                </div>
+                <div id="bearer-ok-list" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+
+              <!-- Başarısız bölümü -->
+              <div id="bearer-fail-section" style="display:none">
+                <div style="font-size:0.82rem;font-weight:700;color:var(--red);margin-bottom:8px;display:flex;align-items:center;gap:6px">
+                  ❌ Başarısız Tokenlar <span id="bearer-fail-count" class="badge badge-red" style="font-size:0.7rem">0</span>
+                </div>
+                <div id="bearer-fail-list" style="display:flex;flex-direction:column;gap:6px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── TAB: HESAP OLUŞTUR ─── -->
+        <div class="tab-pane" id="tab-hesapolustur">
+          <div style="max-width:1100px;margin:0 auto;padding:10px 0">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+              <div>
+                <h1 class="section-title" style="margin-bottom:4px">👤✨ Otomatik Kick Hesap Oluşturucu</h1>
+                <p class="text-sm text-dim">Otomatik e-posta ve tarayıcı botu ile Kick.com üzerinde hesap açın, Bearer token'ı doğrudan panele ekleyin.</p>
+              </div>
+              <div style="display:flex;gap:10px">
+                <button class="btn btn-ghost btn-sm" onclick="generateAccountCredentials()">🎲 Bilgileri Yenile</button>
+              </div>
+            </div>
+
+            <div class="hesap-grid" style="display:grid;grid-template-columns:1.1fr 1fr;gap:20px">
+              <!-- Sol Sütun: Form -->
+              <div class="card" style="display:flex;flex-direction:column;gap:16px">
+                <div class="card-header">
+                  <div class="card-title">📝 Hesap Bilgileri</div>
+                  <span class="badge badge-purple text-xs">Form Bilgileri</span>
+                </div>
+
+                <div class="form-group">
+                  <label style="display:flex;justify-content:space-between">
+                    <span>Kullanıcı Adı (Username)</span>
+                    <a href="javascript:void(0)" onclick="randomizeUsername()" style="color:var(--cyan);font-size:0.75rem;text-decoration:none">🎲 Rastgele Üret</a>
+                  </label>
+                  <input id="ac-username" type="text" placeholder="gamer_reis_99">
+                </div>
+
+                <div class="form-group">
+                  <label>E-Posta Modu</label>
+                  <div style="display:flex;gap:14px;margin-bottom:8px">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.83rem;cursor:pointer">
+                      <input type="radio" name="ac-mail-mode" id="ac-mode-temp" value="temp" checked onchange="toggleMailMode()">
+                      ⚡ temp.tf Gmail (Otomatik Kod Yakalar)
+                    </label>
+                    <label style="display:flex;align-items:center;gap:6px;font-size:0.83rem;cursor:pointer">
+                      <input type="radio" name="ac-mail-mode" id="ac-mode-custom" value="custom" onchange="toggleMailMode()">
+                      ✉️ Kendi E-Postam
+                    </label>
+                  </div>
+                  <div style="display:flex;gap:8px">
+                    <input id="ac-email" type="text" placeholder="temp.tf Gmail adresi otomatik alınacak..." style="flex:1">
+                    <button class="btn btn-ghost btn-sm" id="btn-ac-new-mail" onclick="generateTempEmail()" title="Yeni Geçici Mail Al">🔄 Yenile</button>
+                  </div>
+                  <p class="text-xs text-dim" id="ac-email-hint" style="margin-top:4px">temp.tf Gmail ile gelen 6 haneli Kick onay kodu otomatik okunur.</p>
+                </div>
+
+                <div class="form-row">
+                  <div class="form-group" style="flex:1">
+                    <label style="display:flex;justify-content:space-between">
+                      <span>Şifre</span>
+                      <a href="javascript:void(0)" onclick="randomizePassword()" style="color:var(--cyan);font-size:0.75rem;text-decoration:none">🎲 Güçlü Üret</a>
+                    </label>
+                    <div style="position:relative">
+                      <input id="ac-password" type="password" placeholder="Şifre" style="padding-right:40px">
+                      <button type="button" onclick="togglePasswordVisibility('ac-password')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text3);cursor:pointer;font-size:1rem">👁</button>
+                    </div>
+                  </div>
+
+                  <div class="form-group" style="width:160px">
+                    <label>Doğum Tarihi</label>
+                    <input id="ac-birthdate" type="date">
+                  </div>
+                </div>
+
+                <div class="form-group" style="background:var(--bg3);padding:10px 14px;border-radius:8px;border:1px solid var(--border)">
+                  <label style="display:flex;align-items:center;gap:8px;margin-bottom:0;cursor:pointer">
+                    <input id="ac-visible-browser" type="checkbox">
+                    <span style="font-size:0.85rem">🖥️ Tarayıcıyı Ekranda Göster (Hata ayıklama / İzleme için)</span>
+                  </label>
+                  <p class="text-xs text-dim" style="margin-top:4px;margin-left:22px">Kapalıyken Chrome tamamen arka planda (headless) gizli ve hızlı çalışır.</p>
+                </div>
+
+                <!-- Manuel Kod Giriş Kartı (Gerektiğinde görünür) -->
+                <div id="ac-code-box" style="display:none;background:rgba(245,158,11,0.08);border:1px solid var(--yellow);padding:12px;border-radius:8px">
+                  <div style="font-size:0.85rem;font-weight:600;color:var(--yellow);margin-bottom:6px">📩 6 Haneli Onay Kodu Bekleniyor!</div>
+                  <div style="display:flex;gap:8px">
+                    <input id="ac-manual-code" type="text" maxlength="6" placeholder="Örn: 489201" style="font-size:1.1rem;letter-spacing:4px;text-align:center;width:150px">
+                    <button class="btn btn-primary btn-sm" onclick="submitManualCode()">✓ Kodu İlet</button>
+                  </div>
+                </div>
+
+                <!-- Başlat / Durdur Butonları -->
+                <div style="display:flex;gap:10px;margin-top:8px">
+                  <button class="btn btn-primary" id="btn-ac-start" onclick="startAccountCreation()" style="flex:1;height:44px;font-size:0.95rem">
+                    🚀 Otomatik Hesap Açmayı Başlat
+                  </button>
+                  <button class="btn btn-danger" id="btn-ac-stop" onclick="stopAccountCreation()" style="display:none;height:44px;padding:0 20px">
+                    ⏹ İptal Et
+                  </button>
+                </div>
+              </div>
+
+              <!-- Sağ Sütun: Canlı Konsol ve Sonuçlar -->
+              <div style="display:flex;flex-direction:column;gap:16px">
+                <!-- Canlı Durum Kartı -->
+                <div class="card" style="padding:16px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                    <div style="font-size:0.9rem;font-weight:600">İşlem Durumu</div>
+                    <span class="badge badge-gray text-xs" id="ac-status-badge">Hazır (Boşta)</span>
+                  </div>
+                  <div style="display:flex;gap:16px;font-size:0.82rem;color:var(--text2)">
+                    <div>Kullanıcı: <strong id="ac-status-user" style="color:var(--text)">—</strong></div>
+                    <div>E-Posta: <strong id="ac-status-email" style="color:var(--text)">—</strong></div>
+                  </div>
+                </div>
+
+                <!-- Canlı Terminal Konsolu -->
+                <div class="card" style="flex:1;display:flex;flex-direction:column;min-height:280px">
+                  <div class="card-header" style="background:#0a0a14;border-bottom:1px solid var(--border)">
+                    <div class="card-title" style="font-size:0.82rem;font-family:'JetBrains Mono',monospace">💻 Canlı Terminal Logları</div>
+                    <button class="btn btn-ghost btn-sm" onclick="clearAcTerminal()" style="padding:2px 8px;font-size:0.75rem">Temizle</button>
+                  </div>
+                  <div id="ac-terminal" style="flex:1;background:#05050a;padding:12px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;line-height:1.6;overflow-y:auto;max-height:260px;border-radius:0 0 12px 12px">
+                    <div style="color:var(--text3)">Terminal hazır. Hesap açma işlemini başlattığınızda adımlar burada canlı akacaktır...</div>
+                  </div>
+                </div>
+
+                <!-- Son Başarılı Hesap Kartı -->
+                <div class="card" id="ac-success-card" style="display:none;border-color:var(--green);background:rgba(16,185,129,0.06)">
+                  <div style="display:flex;align-items:center;gap:8px;color:var(--green);font-weight:700;font-size:0.95rem;margin-bottom:10px">
+                    <span>🎉</span> Hesap Başarıyla Açıldı & Sisteme Eklendi!
+                  </div>
+                  <div style="font-size:0.83rem;display:flex;flex-direction:column;gap:6px">
+                    <div>Kullanıcı: <strong id="ac-succ-user" style="color:var(--cyan)"></strong></div>
+                    <div>Şifre: <strong id="ac-succ-pass" style="color:var(--text)"></strong></div>
+                    <div>E-Posta: <span id="ac-succ-email" class="text-dim"></span></div>
+                    <div style="margin-top:6px">
+                      <label style="font-size:0.75rem;color:var(--text3)">Bearer Token:</label>
+                      <div style="display:flex;gap:6px;margin-top:2px">
+                        <input id="ac-succ-token" type="text" readonly style="flex:1;font-family:monospace;font-size:0.75rem;background:var(--bg3)">
+                        <button class="btn btn-ghost btn-sm" onclick="copyAcToken()">📋</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ─── TAB: FOLLOW BOT ─── -->
+        <div class="tab-pane" id="tab-follow">
+          <div style="max-width:960px;margin:0 auto;padding:10px 0">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+              <div>
+                <h1 class="section-title" style="margin-bottom:4px">👤⚡ Kick Takipçi Gönderme</h1>
+                <p class="text-sm text-dim">Kayıtlı Kick tokenları ile hedeflenen kanala otomatik takipçi gönderin.</p>
+              </div>
+              <div style="background:rgba(83,252,24,0.1);border:1px solid rgba(83,252,24,0.3);padding:8px 16px;border-radius:12px;font-size:0.85rem;color:#53fc18;font-weight:600">
+                🔑 Mevcut Token: <span id="follow-token-count">1622</span> Adet
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+              <!-- Sol: Kontrol Paneli -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">⚙️ Takipçi Gönderme Ayarları</div>
+                  <span class="badge badge-gray text-xs" id="follow-status-badge">Hazır</span>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:16px;padding:20px">
+                  <div class="form-group">
+                    <label>Hedef Kick Kanal Kullanıcı Adı</label>
+                    <input id="follow-channel-input" type="text" placeholder="örn: sefoge" value="">
+                  </div>
+
+                  <div class="form-row" style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div class="form-group">
+                      <label>Takipçi Sayısı</label>
+                      <input id="follow-count-input" type="number" min="1" max="5000" value="500" placeholder="500">
+                    </div>
+                    <div class="form-group">
+                      <label>Gecikme (sn)</label>
+                      <input id="follow-delay-input" type="number" step="0.1" min="0" max="5" value="0.2" placeholder="0.2">
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:10px;margin-top:4px">
+                    <button class="btn btn-primary" id="btn-follow-start" onclick="startFollowBot()" style="flex:1;background:linear-gradient(135deg,#53fc18,#1e8a04);color:#000;font-weight:700">
+                      🚀 Takipçileri Gönder
+                    </button>
+                    <button class="btn btn-danger" id="btn-follow-stop" onclick="stopFollowBot()" style="display:none;flex:1">
+                      ⏹ Durdur
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sağ: İstatistikler & İlerleme -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">📊 Canlı Gönderim Durumu</div>
+                </div>
+
+                <div style="padding:20px">
+                  <div style="margin-bottom:16px">
+                    <div style="display:flex;justify-content:space-between;font-size:0.8rem;color:var(--text2);margin-bottom:6px">
+                      <span>İlerleme Oranı</span>
+                      <span id="follow-progress-percent">0%</span>
+                    </div>
+                    <div style="width:100%;height:10px;background:var(--bg3);border-radius:5px;overflow:hidden">
+                      <div id="follow-progress-bar" style="width:0%;height:100%;background:linear-gradient(90deg,#53fc18,#00e5ff);transition:width 0.3s"></div>
+                    </div>
+                  </div>
+
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                    <div class="stat-card" style="padding:12px;background:var(--bg3);border-radius:10px">
+                      <div class="stat-label" style="font-size:0.75rem;color:var(--text3)">Hedef Toplam</div>
+                      <div class="stat-value" id="follow-stat-total" style="font-size:1.2rem;font-weight:700">0</div>
+                    </div>
+                    <div class="stat-card" style="padding:12px;background:var(--bg3);border-radius:10px">
+                      <div class="stat-label" style="font-size:0.75rem;color:var(--text3)">İşlenen</div>
+                      <div class="stat-value" id="follow-stat-sent" style="font-size:1.2rem;font-weight:700">0</div>
+                    </div>
+                    <div class="stat-card" style="padding:12px;background:rgba(83,252,24,0.08);border-radius:10px;border:1px solid rgba(83,252,24,0.2)">
+                      <div class="stat-label" style="font-size:0.75rem;color:#53fc18">Başarılı</div>
+                      <div class="stat-value" id="follow-stat-success" style="font-size:1.2rem;font-weight:700;color:#53fc18">0</div>
+                    </div>
+                    <div class="stat-card" style="padding:12px;background:rgba(239,68,68,0.08);border-radius:10px;border:1px solid rgba(239,68,68,0.2)">
+                      <div class="stat-label" style="font-size:0.75rem;color:#ef4444">Başarısız</div>
+                      <div class="stat-value" id="follow-stat-failed" style="font-size:1.2rem;font-weight:700;color:#ef4444">0</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal Log -->
+            <div class="card" style="margin-top:20px">
+              <div class="card-header">
+                <div class="card-title">💻 Canlı Takipçi Log Terminali</div>
+                <button class="btn btn-ghost btn-sm" onclick="clearFollowTerminal()">Temizle</button>
+              </div>
+              <div id="follow-terminal" style="background:#05050a;padding:12px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;line-height:1.6;overflow-y:auto;max-height:280px;border-radius:0 0 12px 12px">
+                <div style="color:var(--text3)">Takipçi botu terminal hazır. İşlemi başlattığınızda canlı akış burada görünecektir...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /content -->
+    </div><!-- /main-body -->
+  </div><!-- /app -->
+
+  <!-- ═══ MODALS ═══ -->
+
+  <!-- Bot Editor Modal -->
+  <div class="modal-overlay" id="modal-bot" onclick="if(event.target===this)closeBotModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="modal-bot-title">Bot Düzenle</div>
+        <button class="modal-close" onclick="closeBotModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Bot Adı *</label>
+            <input id="bot-edit-name" type="text" placeholder="MertBot">
+          </div>
+          <div class="form-group">
+            <label>Cevap Olasılığı (0–1)</label>
+            <input id="bot-edit-response_chance" type="number" step="0.05" min="0.05" max="0.95" placeholder="0.35">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Kişilik</label>
+          <input id="bot-edit-personality" type="text" placeholder="Samimi, esprili, doğal">
+        </div>
+
+        <div class="form-group">
+          <label>Konuşma Tarzı</label>
+          <input id="bot-edit-style" type="text" placeholder="Kısa günlük Türkçe, az emoji">
+        </div>
+
+        <div class="form-group">
+          <label>İlgi Alanları</label>
+          <input id="bot-edit-interests" type="text" placeholder="Oyun, futbol, müzik">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Min Gecikme (sn)</label>
+            <input id="bot-edit-min_delay" type="number" placeholder="8">
+          </div>
+          <div class="form-group">
+            <label>Max Gecikme (sn)</label>
+            <input id="bot-edit-max_delay" type="number" placeholder="45">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Günlük Max Mesaj</label>
+          <input id="bot-edit-daily_limit" type="number" placeholder="50">
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>AI Token</label>
+            <select id="bot-edit-ai_token_id">
+              <option value="">Varsayılan</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Kick Hesabı</label>
+            <select id="bot-edit-kick_account_id">
+              <option value="">— Seç —</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Özel Sistem Promptu (boş bırakırsan otomatik oluşturulur)</label>
+          <textarea id="bot-edit-system_prompt" rows="4"
+            placeholder="Boş bırakırsan karakter bilgilerinden otomatik oluşturulur…"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeBotModal()">İptal</button>
+        <button class="btn btn-primary" onclick="saveBotEditor()">💾 Kaydet</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bot Manual Send Modal -->
+  <div class="modal-overlay" id="modal-bot-send" onclick="if(event.target===this)closeBotSendModal()">
+    <div class="modal" style="width:380px">
+      <div class="modal-header">
+        <div class="modal-title">💬 Bot Mesajı — <span id="bot-send-name" class="glow-text"></span></div>
+        <button class="modal-close" onclick="closeBotSendModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Gönderilecek mesaj</label>
+          <textarea id="bot-send-msg" rows="3" placeholder="Chat'e gönderilecek mesajı yaz…"></textarea>
+        </div>
+        <p class="text-xs text-dim">Bu bot'un atanmış Kick hesabından gönderilecek.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeBotSendModal()">İptal</button>
+        <button class="btn btn-primary" onclick="sendBotMessage()">🚀 Gönder</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div id="toast-container"></div>
+
+  <!-- ═══ KICK SETUP MODAL ═══ -->
+  <div id="kick-setup-overlay" style="
+    position:fixed;inset:0;z-index:9999;
+    background:rgba(8,6,14,0.92);
+    backdrop-filter:blur(18px);
+    -webkit-backdrop-filter:blur(18px);
+    display:flex;align-items:center;justify-content:center;
+    opacity:0;pointer-events:none;
+    transition:opacity 0.35s ease;
+  ">
+    <div id="kick-setup-card" style="
+      width:min(560px,94vw);
+      background:linear-gradient(145deg,rgba(22,14,38,0.95) 0%,rgba(10,22,30,0.95) 100%);
+      border:1px solid rgba(83,252,24,0.2);
+      border-radius:24px;
+      padding:48px 44px 40px;
+      box-shadow:
+        0 24px 80px rgba(0,0,0,0.7),
+        0 0 80px rgba(83,252,24,0.05),
+        inset 0 1px 0 rgba(255,255,255,0.06);
+      transform:translateY(24px) scale(0.97);
+      transition:transform 0.35s ease;
+      box-sizing:border-box;
+      position:relative;
+    ">
+      <!-- Kapat butonu -->
+      <button onclick="closeKickSetupModal()" id="kick-setup-close" style="
+        position:absolute;top:18px;right:18px;
+        background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+        color:#aaa;border-radius:8px;width:32px;height:32px;
+        font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+        transition:all 0.2s;
+      " onmouseover="this.style.background='rgba(255,255,255,0.12)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">✕</button>
+
+      <!-- Logo & Başlık -->
+      <div style="text-align:center;margin-bottom:36px;">
+        <div style="
+          width:72px;height:72px;border-radius:20px;
+          background:linear-gradient(135deg,#53fc18,#1a7a02);
+          margin:0 auto 18px;
+          display:flex;align-items:center;justify-content:center;
+          font-size:36px;
+          box-shadow:0 8px 32px rgba(83,252,24,0.35),0 0 0 1px rgba(83,252,24,0.2);
+        ">🎯</div>
+        <h2 style="margin:0 0 8px;font-size:1.55rem;font-weight:800;color:#fff;letter-spacing:-0.5px;">
+          Kick Chat Entegrasyonu
+        </h2>
+        <p style="margin:0;font-size:0.875rem;color:#777;line-height:1.5;">
+          Hangi Kick kanalını dinlemek istiyorsun?<br>
+          Bot sistemi o kanalın canlı chatini takip edecek.
+        </p>
+      </div>
+
+      <!-- Input -->
+      <div style="position:relative;margin-bottom:14px;">
+        <span style="
+          position:absolute;left:18px;top:50%;transform:translateY(-50%);
+          font-size:18px;color:#53fc18;font-weight:800;
+          pointer-events:none;user-select:none;
+        ">@</span>
+        <input
+          id="kick-setup-input"
+          type="text"
+          placeholder="kanal-adını-gir  (örn: sefoge)"
+          autocomplete="off" spellcheck="false"
+          style="
+            width:100%;padding:16px 18px 16px 40px;
+            background:rgba(0,0,0,0.4);
+            border:1.5px solid rgba(83,252,24,0.2);
+            border-radius:14px;font-size:1rem;
+            color:#fff;font-weight:500;
+            outline:none;transition:border-color 0.25s,box-shadow 0.25s;
+            box-sizing:border-box;
+          "
+          onfocus="this.style.borderColor='#53fc18';this.style.boxShadow='0 0 0 3px rgba(83,252,24,0.12)'"
+          onblur="this.style.borderColor='rgba(83,252,24,0.2)';this.style.boxShadow='none'"
+          onkeydown="if(event.key==='Enter')doKickConnect()"
+        >
+      </div>
+
+      <!-- Hata mesajı -->
+      <div id="kick-setup-error" style="
+        font-size:0.8rem;color:#cf6679;min-height:18px;
+        margin-bottom:10px;padding-left:4px;
+        display:none;
+      "></div>
+
+      <!-- Bağlan butonu -->
+      <button id="kick-setup-btn" onclick="doKickConnect()" style="
+        width:100%;padding:16px;
+        background:linear-gradient(135deg,#53fc18 0%,#1a7a02 100%);
+        color:#061202;font-size:1rem;font-weight:800;
+        border:none;border-radius:14px;cursor:pointer;
+        box-shadow:0 6px 24px rgba(83,252,24,0.35);
+        transition:all 0.2s;letter-spacing:0.3px;
+        margin-bottom:14px;
+      "
+        onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 8px 32px rgba(83,252,24,0.45)'"
+        onmouseout="this.style.transform='translateY(0)';this.style.boxShadow='0 6px 24px rgba(83,252,24,0.35)'">
+        ⚡ Bağlan ve Başla
+      </button>
+
+      <!-- Atla linki -->
+      <div style="text-align:center;">
+        <button onclick="closeKickSetupModal()" style="
+          background:none;border:none;color:#555;font-size:0.8rem;
+          cursor:pointer;transition:color 0.2s;
+        " onmouseover="this.style.color='#aaa'" onmouseout="this.style.color='#555'">
+          Şimdilik atla, sonra bağlanırım →
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/dashboard.js"></script>
+
+  <script>
+  // ═══ KICK SETUP MODAL ═══
+  const kickSetupOverlay = document.getElementById('kick-setup-overlay');
+  const kickSetupCard    = document.getElementById('kick-setup-card');
+  const kickSetupInput   = document.getElementById('kick-setup-input');
+  const kickSetupBtn     = document.getElementById('kick-setup-btn');
+  const kickSetupError   = document.getElementById('kick-setup-error');
+  const kickMiniChannel  = document.getElementById('kick-mini-channel');
+  const kickMiniDot      = document.getElementById('kick-mini-dot');
+
+  function openKickSetupModal() {
+    kickSetupOverlay.style.opacity = '1';
+    kickSetupOverlay.style.pointerEvents = 'auto';
+    kickSetupCard.style.transform = 'translateY(0) scale(1)';
+    setTimeout(() => kickSetupInput.focus(), 200);
+  }
+
+  function closeKickSetupModal() {
+    kickSetupOverlay.style.opacity = '0';
+    kickSetupOverlay.style.pointerEvents = 'none';
+    kickSetupCard.style.transform = 'translateY(24px) scale(0.97)';
+    kickSetupError.style.display = 'none';
+  }
+
+  async function doKickConnect() {
+    const channel = kickSetupInput.value.trim();
+    if (!channel) {
+      kickSetupError.textContent = 'Lütfen bir kanal adı girin!';
+      kickSetupError.style.display = 'block';
+      kickSetupInput.focus();
+      return;
+    }
+
+    kickSetupBtn.disabled = true;
+    kickSetupBtn.textContent = '⏳ Bağlanıyor...';
+    kickSetupBtn.style.background = 'linear-gradient(135deg,#ffd740,#e65100)';
+    kickSetupBtn.style.color = '#1a0e00';
+    kickSetupError.style.display = 'none';
+
+    try {
+      // dashboard.js'teki mevcut connectChannel fonksiyonunu kullan
+      // channel-input'a değeri yaz ve connectChannel() çağır
+      const legacyInput = document.getElementById('channel-input');
+      if (legacyInput) legacyInput.value = channel;
+
+      if (typeof connectChannel === 'function') {
+        await connectChannel(channel);
+      } else {
+        // Doğrudan API çağrısı
+        const res = await fetch('/api/channel/connect', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({channel})
+        });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || 'Bağlantı başarısız');
+      }
+
+      // Başarılı
+      kickMiniChannel.textContent = '@' + channel;
+      kickMiniDot.style.background = '#53fc18';
+      kickMiniDot.style.boxShadow = '0 0 6px rgba(83,252,24,0.8)';
+      localStorage.setItem('lastKickChannel', channel);
+      closeKickSetupModal();
+
+    } catch (err) {
+      kickSetupError.textContent = 'Bağlantı kurulamadı: ' + (err.message || 'Hata');
+      kickSetupError.style.display = 'block';
+    } finally {
+      kickSetupBtn.disabled = false;
+      kickSetupBtn.textContent = '⚡ Bağlan ve Başla';
+      kickSetupBtn.style.background = 'linear-gradient(135deg,#53fc18 0%,#1a7a02 100%)';
+      kickSetupBtn.style.color = '#061202';
+    }
+  }
+
+  // SocketIO bağlantı durumu güncelle
+  const _sock = typeof socket !== 'undefined' ? socket : null;
+  if (_sock) {
+    _sock.on('kick_status', function(data) {
+      if (data.status === 'connected') {
+        kickMiniDot.style.background = '#53fc18';
+        kickMiniDot.style.boxShadow = '0 0 8px rgba(83,252,24,0.8)';
+        if (kickSetupInput.value) kickMiniChannel.textContent = '@' + kickSetupInput.value.trim();
+      } else if (data.status === 'disconnected' || data.status === 'error') {
+        kickMiniDot.style.background = '#cf6679';
+        kickMiniDot.style.boxShadow = '0 0 6px rgba(207,102,121,0.6)';
+      } else if (data.status === 'connecting') {
+        kickMiniDot.style.background = '#ffd740';
+        kickMiniDot.style.boxShadow = '0 0 6px rgba(255,215,64,0.6)';
+      }
+    });
+  }
+
+  // İlk açılışta modal göster (localStorage'da kanal yoksa)
+  window.addEventListener('load', () => {
+    const saved = localStorage.getItem('lastKickChannel');
+    if (saved) {
+      kickSetupInput.value = saved;
+      kickMiniChannel.textContent = '@' + saved;
+    } else {
+      setTimeout(openKickSetupModal, 500);
+    }
+  });
+  </script>
+</body>
+</html>
+
+
+<style>
+.stat-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 8px;
+  padding: 12px;
+  text-align: center;
+}
+.stat-label {
+  font-size: 0.75rem;
+  color: var(--text3);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--cyan);
+}
+</style>
+
+<script>
+// ViewBot fonksiyonları
+let viewbotStatsInterval = null;
+
+async function startViewBot() {
+  const channel = document.getElementById('viewbot-channel').value.trim();
+  const count = parseInt(document.getElementById('viewbot-count').value);
+  
+  if (!channel) {
+    alert('Kanal adı gerekli!');
+    return;
+  }
+  
+  if (count < 1 || count > 500) {
+    alert('Viewer sayısı 1-500 arasında olmalı!');
+    return;
+  }
+  
+  try {
+    const res = await fetch('/api/viewbot/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel, viewer_count: count })
+    });
+    
+    const data = await res.json();
+    
+    if (data.success) {
+      document.getElementById('btn-viewbot-start').style.display = 'none';
+      document.getElementById('btn-viewbot-stop').style.display = 'block';
+      document.getElementById('viewbot-status-badge').textContent = 'Çalışıyor';
+      document.getElementById('viewbot-status-badge').className = 'badge badge-green text-xs';
+      addViewBotLog(data.message);
+      
+      // İstatistikleri her 3 saniyede bir güncelle
+      viewbotStatsInterval = setInterval(refreshViewBotStats, 3000);
+    } else {
+      alert(data.error || 'Hata oluştu');
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Bağlantı hatası!');
+  }
+}
+
+async function stopViewBot() {
+  try {
+    const res = await fetch('/api/viewbot/stop', { method: 'POST' });
+    const data = await res.json();
+    
+    if (data.success) {
+      document.getElementById('btn-viewbot-start').style.display = 'block';
+      document.getElementById('btn-viewbot-stop').style.display = 'none';
+      document.getElementById('viewbot-status-badge').textContent = 'Durdu';
+      document.getElementById('viewbot-status-badge').className = 'badge badge-gray text-xs';
+      addViewBotLog(data.message);
+      
+      if (viewbotStatsInterval) {
+        clearInterval(viewbotStatsInterval);
+        viewbotStatsInterval = null;
+      }
+    } else {
+      alert(data.error || 'Hata oluştu');
+    }
+  } catch (err) {
+    console.error(err);
+    alert('Bağlantı hatası!');
+  }
+}
+
+async function refreshViewBotStats() {
+  try {
+    const res = await fetch('/api/viewbot/status');
+    const data = await res.json();
+    
+    document.getElementById('viewbot-stat-connections').textContent = data.connections || 0;
+    document.getElementById('viewbot-stat-attempts').textContent = data.attempts || 0;
+    document.getElementById('viewbot-stat-pings').textContent = data.pings || 0;
+    document.getElementById('viewbot-stat-heartbeats').textContent = data.heartbeats || 0;
+    document.getElementById('viewbot-stat-stream-id').textContent = data.stream_id || '—';
+    document.getElementById('viewbot-stat-viewers').textContent = data.viewers || '—';
+  } catch (err) {
+    console.error('ViewBot stats hatası:', err);
+  }
+}
+
+function addViewBotLog(msg) {
+  const terminal = document.getElementById('viewbot-terminal');
+  const time = new Date().toLocaleTimeString('tr-TR');
+  const logLine = document.createElement('div');
+  logLine.innerHTML = `<span style="color:#666">[${time}]</span> <span style="color:#03dac6">${msg}</span>`;
+  terminal.appendChild(logLine);
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function clearViewBotTerminal() {
+  document.getElementById('viewbot-terminal').innerHTML = '<div style="color:var(--text3)">ViewBot terminal hazır...</div>';
+}
+
+// SocketIO ViewBot log dinleyicisi
+if (typeof socket !== 'undefined') {
+  socket.on('viewbot_log', function(data) {
+    addViewBotLog(data.message);
+  });
+}
+</script>

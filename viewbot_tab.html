@@ -1,0 +1,96 @@
+
+        <!-- ─── TAB: VIEWBOT ─── -->
+        <div class="tab-pane" id="tab-viewbot">
+          <div style="max-width:900px;margin:0 auto;padding:10px 0">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+              <div>
+                <h1 class="section-title" style="margin-bottom:4px">👁️ Kick ViewBot</h1>
+                <p class="text-sm text-dim">Kick kanalına sahte viewer göndererek izlenme sayısını artırın.</p>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+              <!-- Sol: Kontrol Paneli -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">⚙️ ViewBot Ayarları</div>
+                  <span class="badge badge-gray text-xs" id="viewbot-status-badge">Durdu</span>
+                </div>
+
+                <div style="display:flex;flex-direction:column;gap:16px;padding:20px">
+                  <div class="form-group">
+                    <label>Kanal Adı veya URL</label>
+                    <input id="viewbot-channel" type="text" placeholder="sefoge" value="sefoge">
+                  </div>
+
+                  <div class="form-group">
+                    <label>Viewer Sayısı (1-500)</label>
+                    <input id="viewbot-count" type="number" min="1" max="500" value="50" placeholder="50">
+                  </div>
+
+                  <div style="display:flex;gap:10px">
+                    <button class="btn btn-primary" id="btn-viewbot-start" onclick="startViewBot()" style="flex:1">
+                      🚀 ViewBot Başlat
+                    </button>
+                    <button class="btn btn-danger" id="btn-viewbot-stop" onclick="stopViewBot()" style="display:none;flex:1">
+                      ⏹ Durdur
+                    </button>
+                  </div>
+
+                  <div style="background:rgba(245,158,11,0.1);border:1px solid var(--yellow);padding:12px;border-radius:8px">
+                    <div style="font-size:0.85rem;font-weight:600;color:var(--yellow);margin-bottom:4px">⚠️ Uyarı</div>
+                    <p class="text-xs text-dim">ViewBot kullanımı Kick ToS'a aykırıdır. Kendi sorumluluğunuzda kullanın!</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Sağ: İstatistikler -->
+              <div class="card">
+                <div class="card-header">
+                  <div class="card-title">📊 Canlı İstatistikler</div>
+                  <button class="btn btn-ghost btn-sm" onclick="refreshViewBotStats()">🔄</button>
+                </div>
+
+                <div style="padding:20px">
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                    <div class="stat-card">
+                      <div class="stat-label">Bağlantılar</div>
+                      <div class="stat-value" id="viewbot-stat-connections">0</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Denemeler</div>
+                      <div class="stat-value" id="viewbot-stat-attempts">0</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Ping</div>
+                      <div class="stat-value" id="viewbot-stat-pings">0</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Heartbeat</div>
+                      <div class="stat-value" id="viewbot-stat-heartbeats">0</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Stream ID</div>
+                      <div class="stat-value text-xs" id="viewbot-stat-stream-id">—</div>
+                    </div>
+                    <div class="stat-card">
+                      <div class="stat-label">Gerçek Viewer</div>
+                      <div class="stat-value" id="viewbot-stat-viewers">—</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Terminal Log -->
+            <div class="card" style="margin-top:20px">
+              <div class="card-header">
+                <div class="card-title">💻 ViewBot Terminal</div>
+                <button class="btn btn-ghost btn-sm" onclick="clearViewBotTerminal()">Temizle</button>
+              </div>
+              <div id="viewbot-terminal" style="background:#05050a;padding:12px;font-family:'JetBrains Mono',monospace;font-size:0.78rem;line-height:1.6;overflow-y:auto;max-height:300px;border-radius:0 0 12px 12px">
+                <div style="color:var(--text3)">ViewBot terminal hazır...</div>
+              </div>
+            </div>
+          </div>
+        </div>

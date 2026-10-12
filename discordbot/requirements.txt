@@ -1,0 +1,12 @@
+# ── Required ──────────────────────────────────────────────────────────────────
+discord.py>=2.3.0
+python-dotenv>=1.0.0
+aiohttp>=3.8.0
+tls-client>=0.2.1
+websockets>=12.0
+
+# ── Account Creator (optional but recommended) ─────────────────────────────────
+# No extra packages needed — uses mail.tm (free) and tls_client (already above)
+
+# ── Optional Performance / Extras ─────────────────────────────────────────────
+fake-useragent>=1.4.0

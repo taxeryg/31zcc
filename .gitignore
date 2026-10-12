@@ -1,0 +1,12 @@
+﻿.secret_key
+botdash.db
+database.db
+*.db
+__pycache__/
+*.pyc
+.env
+**/.env
+tokens.json
+**/tokens.json
+*tokens*.txt
+raw_tokens.txt
