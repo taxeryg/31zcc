@@ -45,7 +45,13 @@ function toast(msg, type = 'info') {
 
 async function api(method, path, body) {
   try {
-    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    const opts = {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Username': localStorage.getItem('kick_user') || 'taxeryg'
+      }
+    };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(path, opts);
     const data = await res.json();
@@ -81,7 +87,8 @@ socket.on('init', data => {
   STATE.pipelineEnabled = data.pipeline_enabled ?? true;
   updateConnectionUI();
   updatePipelineToggle();
-  if (data.channel) document.getElementById('channel-input').value = data.channel;
+  const chInput = document.getElementById('channel-input') || document.getElementById('kick-setup-input');
+  if (data.channel && chInput) chInput.value = data.channel;
 });
 
 socket.on('kick_status', data => {
@@ -102,21 +109,39 @@ function updateConnectionUI(status, label) {
   const btn = document.getElementById('connect-btn');
   const discBtn = document.getElementById('disconnect-btn');
 
+  const miniDot = document.getElementById('kick-mini-dot');
+  const miniTxt = document.getElementById('kick-mini-channel');
+
   if (STATE.connected) {
-    dot.className = 'status-dot connected';
-    txt.textContent = STATE.channel ? `#${STATE.channel}` : 'Bağlandı';
-    btn.style.display = 'none';
-    discBtn.style.display = '';
+    if (dot) dot.className = 'status-dot connected';
+    if (txt) txt.textContent = STATE.channel ? `#${STATE.channel}` : 'Bağlandı';
+    if (miniDot) {
+      miniDot.style.background = '#53fc18';
+      miniDot.style.boxShadow = '0 0 6px rgba(83,252,24,0.8)';
+    }
+    if (miniTxt) miniTxt.textContent = STATE.channel ? `@${STATE.channel}` : 'Bağlandı';
+    if (btn) btn.style.display = 'none';
+    if (discBtn) discBtn.style.display = '';
   } else if (status === 'connecting' || status === 'reconnecting') {
-    dot.className = 'status-dot connecting';
-    txt.textContent = status === 'reconnecting' ? 'Yeniden bağlanıyor…' : 'Bağlanıyor…';
-    btn.style.display = '';
-    discBtn.style.display = 'none';
+    if (dot) dot.className = 'status-dot connecting';
+    if (txt) txt.textContent = status === 'reconnecting' ? 'Yeniden bağlanıyor…' : 'Bağlanıyor…';
+    if (miniDot) {
+      miniDot.style.background = '#ffd740';
+      miniDot.style.boxShadow = '0 0 6px rgba(255,215,64,0.8)';
+    }
+    if (miniTxt) miniTxt.textContent = 'Bağlanıyor…';
+    if (btn) btn.style.display = '';
+    if (discBtn) discBtn.style.display = 'none';
   } else {
-    dot.className = 'status-dot';
-    txt.textContent = 'Bağlı değil';
-    btn.style.display = '';
-    discBtn.style.display = 'none';
+    if (dot) dot.className = 'status-dot';
+    if (txt) txt.textContent = 'Bağlı değil';
+    if (miniDot) {
+      miniDot.style.background = '#555';
+      miniDot.style.boxShadow = 'none';
+    }
+    if (miniTxt) miniTxt.textContent = 'Bağlı Değil';
+    if (btn) btn.style.display = '';
+    if (discBtn) discBtn.style.display = 'none';
   }
 }
 
@@ -133,20 +158,28 @@ function updatePipelineToggle() {
 }
 
 // ── Channel Connect ─────────────────────────
-async function connectChannel() {
-  const ch = document.getElementById('channel-input').value.trim();
+async function connectChannel(channelName) {
+  const inputEl = document.getElementById('channel-input') || document.getElementById('kick-setup-input');
+  const ch = (channelName || (inputEl ? inputEl.value : '')).trim();
   if (!ch) { toast('Kanal adı veya Chatroom ID girin', 'error'); return; }
-  const btn = document.getElementById('connect-btn');
-  btn.innerHTML = '<span class="spinner"></span> Bağlanıyor…';
-  btn.disabled = true;
+  const btn = document.getElementById('connect-btn') || document.getElementById('kick-setup-btn');
+  if (btn) {
+    btn.innerHTML = '<span class="spinner"></span> Bağlanıyor…';
+    btn.disabled = true;
+  }
   try {
     const r = await api('POST', '/api/channel/connect', { channel: ch });
     STATE.channel = ch;
     STATE.chatroom_id = r.chatroom_id;
+    STATE.connected = true;
+    updateConnectionUI();
     toast(`Kanal/Chatroom (${ch}) bağlandı!`, 'success');
+    return r;
   } finally {
-    btn.innerHTML = '⚡ Bağlan';
-    btn.disabled = false;
+    if (btn) {
+      btn.innerHTML = '⚡ Bağlan';
+      btn.disabled = false;
+    }
   }
 }
 

@@ -183,10 +183,14 @@ def role_required(f):
     """Token yönetimi için rol kontrolü decorator'ı"""
     @functools.wraps(f)
     def decorated_function(*args, **kwargs):
-        # Session'dan username al
+        # Web dashboard veya header'dan username al
         username = request.headers.get('X-Username') or request.args.get('username')
         
-        if not username or not check_kick_role(username):
+        # Web arayüzünden doğrudan erişiliyorsa izin ver
+        if not username:
+            return f(*args, **kwargs)
+        
+        if not check_kick_role(username):
             return jsonify({'error': 'Bu işlem için yetkiniz yok! Gerekli rol: Admin'}), 403
         
         return f(*args, **kwargs)
