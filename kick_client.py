@@ -10,9 +10,51 @@ import websocket
 
 logger = logging.getLogger(__name__)
 
-KICK_APP_KEY = '32cbd69e4b950bf97679'
+KICK_APP_KEY = '34bf7a0ff419a2a775b9'
+KICK_CLUSTER = 'us2'
+
+def get_pusher_credentials(channel_id=None):
+    """Dynamically fetch current Pusher app_key and cluster from Kick API, with fallback."""
+    global KICK_APP_KEY, KICK_CLUSTER
+    try:
+        cid = channel_id or 668
+        url = f'https://web.kick.com/api/v1/realtime/channels/{cid}/chat/connection'
+        headers = {
+            'Referer': 'https://kick.com',
+            'Origin': 'https://kick.com',
+            'Accept': 'application/json',
+            'x-app-platform': 'web',
+            'Content-Type': 'application/json',
+            'User-Agent': _HEADERS['User-Agent'],
+        }
+        body = {
+            'client': {'id': '68b6dbe3-a5fe-48b9-9e97-61938f004681', 'type': 'web'},
+            'capabilities': {'accepted_providers': [{'provider': 'pusher'}]}
+        }
+        resp = requests.post(url, headers=headers, json=body, timeout=5)
+        if resp.status_code == 200:
+            conns = resp.json().get('data', {}).get('connections', [])
+            for c in conns:
+                if c.get('provider') == 'pusher':
+                    creds = c.get('credentials', {})
+                    if creds.get('app_key'):
+                        KICK_APP_KEY = creds['app_key']
+                        KICK_CLUSTER = creds.get('cluster', 'us2')
+                        logger.info(f"Updated Kick Pusher credentials: key={KICK_APP_KEY}, cluster={KICK_CLUSTER}")
+                        return KICK_APP_KEY, KICK_CLUSTER
+    except Exception as e:
+        logger.warning(f"Could not fetch dynamic Pusher credentials: {e}")
+    return KICK_APP_KEY, KICK_CLUSTER
+
+def get_kick_ws_url(channel_id=None):
+    key, cluster = get_pusher_credentials(channel_id)
+    return (
+        f'wss://ws-{cluster}.pusher.com/app/{key}'
+        '?protocol=7&client=js&version=7.6.0&flash=false'
+    )
+
 KICK_WS_URL = (
-    f'wss://ws-us2.pusher.com/app/{KICK_APP_KEY}'
+    f'wss://ws-{KICK_CLUSTER}.pusher.com/app/{KICK_APP_KEY}'
     '?protocol=7&client=js&version=7.6.0&flash=false'
 )
 KICK_API_BASE = 'https://kick.com/api/v2'
@@ -135,8 +177,9 @@ class KickChatClient:
         import traceback
         while self.running:
             try:
+                ws_url = get_kick_ws_url(self.chatroom_id)
                 self.ws = websocket.WebSocketApp(
-                    KICK_WS_URL,
+                    ws_url,
                     on_open=self._on_open,
                     on_message=self._on_message,
                     on_error=self._on_error,
@@ -167,7 +210,17 @@ class KickChatClient:
             data = json.loads(raw)
             event = data.get('event', '')
 
-            if event == 'pusher:connection_established':
+            if event == 'pusher:error':
+                err_data = data.get('data', {})
+                if isinstance(err_data, str):
+                    try: err_data = json.loads(err_data)
+                    except: pass
+                code = err_data.get('code') if isinstance(err_data, dict) else None
+                if code == 4001:
+                    logger.warning("Pusher 4001 error, refreshing credentials...")
+                    get_pusher_credentials(self.chatroom_id)
+
+            elif event == 'pusher:connection_established':
                 self.connected = True
                 self._status('connected', f'Bağlandı ✓  {self.channel} (#{self.chatroom_id})')
                 ws.send(json.dumps({
