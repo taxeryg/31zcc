@@ -49,11 +49,15 @@ async function api(method, path, body) {
       method,
       headers: {
         'Content-Type': 'application/json',
-        'X-Username': localStorage.getItem('kick_user') || 'taxeryg'
+        'X-Username': localStorage.getItem('kick_user') || 'egeazakli'
       }
     };
     if (body !== undefined) opts.body = JSON.stringify(body);
     const res = await fetch(path, opts);
+    if (res.status === 401) {
+      window.location.href = '/login';
+      return;
+    }
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
     return data;
@@ -386,6 +390,7 @@ async function deleteBot(id) {
   if (!confirm('Bu botu silmek istediğine emin misin?')) return;
   await api('DELETE', `/api/bots/${id}`);
   await loadBots();
+  await syncCloudBackup();
   toast('Bot silindi', 'info');
 }
 
@@ -482,6 +487,7 @@ async function saveBotEditor() {
   }
   closeBotModal();
   await loadBots();
+  await syncCloudBackup();
 }
 
 // Bot manual send modal
@@ -554,12 +560,14 @@ async function addAiToken() {
   document.getElementById('ai-token').value = '';
   toast('AI token eklendi', 'success');
   await loadAiTokens();
+  await syncCloudBackup();
 }
 
 async function deleteAiToken(id) {
   if (!confirm('Bu token silinsin mi?')) return;
   await api('DELETE', `/api/tokens/${id}`);
   await loadAiTokens();
+  await syncCloudBackup();
   toast('Token silindi', 'info');
 }
 
@@ -617,6 +625,7 @@ async function addKickAccount() {
   toast('Kick hesabı eklendi', 'success');
   await loadKickAccounts();
   await loadBots();
+  await syncCloudBackup();
 }
 
 async function bulkAddKickAccounts() {
@@ -672,6 +681,7 @@ async function bulkAddKickAccounts() {
 
     await loadKickAccounts();
     await loadBots();
+    await syncCloudBackup();
   } catch(e) {
     resultsDiv.innerHTML = `<div class="text-xs" style="color:var(--red)">❌ Hata: ${esc(e.message)}</div>`;
   } finally {
@@ -684,6 +694,7 @@ async function deleteKickAccount(id) {
   if (!confirm('Bu Kick hesabı silinsin mi?')) return;
   await api('DELETE', `/api/kick-accounts/${id}`);
   await loadKickAccounts();
+  await syncCloudBackup();
   toast('Hesap silindi', 'info');
 }
 
@@ -1147,15 +1158,92 @@ window.switchTab = function(tabName) {
   }
 };
 
+// ── Cloud Sync & Auto-Persistence ───────────
+async function syncCloudBackup() {
+  try {
+    const backup = await api('GET', '/api/sync/backup');
+    if (backup && (backup.ai_tokens?.length || backup.kick_accounts?.length || backup.bots?.length)) {
+      localStorage.setItem('taxer_persistent_backup', JSON.stringify(backup));
+    }
+  } catch (e) {
+    console.warn('Backup sync failed:', e);
+  }
+}
+
+async function checkAndRestoreBackup() {
+  try {
+    const status = await api('GET', '/api/sync/status');
+    const localBackupRaw = localStorage.getItem('taxer_persistent_backup');
+    
+    // Eğer sunucu yeni açıldıysa veya yeniden başlatıldıysa ve tokenlar boşsa:
+    if (status && status.ai_tokens === 0 && status.kick_accounts === 0 && localBackupRaw) {
+      const localBackup = JSON.parse(localBackupRaw);
+      if (localBackup && (localBackup.ai_tokens?.length || localBackup.kick_accounts?.length || localBackup.bots?.length)) {
+        await api('POST', '/api/sync/restore', localBackup);
+        toast('Kayıtlı token ve botlarınız otomatik geri yüklendi! ✅', 'success');
+      }
+    }
+  } catch (err) {
+    console.warn('Auto restore check failed:', err);
+  }
+}
+
+async function exportBackupJson() {
+  try {
+    const data = await api('GET', '/api/sync/backup');
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `taxerai_backup_${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Yedek JSON dosyası indirildi! 📥', 'success');
+  } catch (err) {
+    toast('Yedek indirilemedi: ' + err.message, 'error');
+  }
+}
+
+function triggerImportJson() {
+  const inp = document.getElementById('backup-file-input');
+  if (inp) inp.click();
+}
+
+async function handleImportJson(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      await api('POST', '/api/sync/restore', data);
+      await syncCloudBackup();
+      await Promise.all([loadAiTokens(), loadKickAccounts(), loadBots()]);
+      toast('Yedek başarıyla geri yüklendi! ✅', 'success');
+    } catch (err) {
+      toast('Geçersiz yedek dosyası: ' + err.message, 'error');
+    } finally {
+      e.target.value = '';
+    }
+  };
+  reader.readAsText(file);
+}
+
 // ── Page Init ───────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   try {
-    // Load all data in parallel
+    // 1. Sunucuda token yoksa tarayıcıdaki yedekten anında geri yükle
+    await checkAndRestoreBackup();
+
+    // 2. Verileri paralel yükle
     await Promise.all([
       loadAiTokens(),
       loadKickAccounts(),
       loadBots(),
     ]);
+
+    // 3. Güncel hali tarayıcıya yedekle
+    await syncCloudBackup();
   } catch (e) {
     console.error('Init load error:', e);
   }

@@ -1,6 +1,7 @@
 """
 storage.py — SQLite + Fernet şifreli token yönetimi
 """
+import json
 import sqlite3
 import os
 import logging
@@ -9,21 +10,29 @@ from cryptography.fernet import Fernet
 logger = logging.getLogger(__name__)
 
 DB_FILE = os.environ.get('DB_FILE', 'botdash.db')
+BACKUP_FILE = os.environ.get('BACKUP_FILE', 'persistent_storage.json')
 _KEY_FILE = '.secret_key'
+
+DEFAULT_FERNET_KEY = b'pO8o1qW7CmLzWfbh-NZ1ZP-QJBXanmRWMl4MpWNcQvU='
 
 
 def _get_or_create_fernet():
     env_key = os.environ.get('FERNET_KEY')
     if env_key:
-        return Fernet(env_key.encode() if isinstance(env_key, str) else env_key)
+        try:
+            return Fernet(env_key.encode() if isinstance(env_key, str) else env_key)
+        except Exception:
+            pass
     if os.path.exists(_KEY_FILE):
-        with open(_KEY_FILE, 'rb') as f:
-            key = f.read().strip()
-    else:
-        key = Fernet.generate_key()
-        with open(_KEY_FILE, 'wb') as f:
-            f.write(key)
-    return Fernet(key)
+        try:
+            with open(_KEY_FILE, 'rb') as f:
+                key = f.read().strip()
+                if key:
+                    return Fernet(key)
+        except Exception:
+            pass
+    # Sabit anahtar: sunucu yeniden başlasa bile şifre çözümü asla bozulmaz
+    return Fernet(DEFAULT_FERNET_KEY)
 
 
 _cipher = _get_or_create_fernet()
@@ -110,6 +119,23 @@ def init_db():
     )''')
 
     conn.commit()
+
+    # Otomatik geri yükleme: Eğer DB yeni oluşmuşsa ve persistent_storage.json varsa geri yükle
+    if os.path.exists(BACKUP_FILE):
+        try:
+            c.execute('SELECT COUNT(*) FROM ai_tokens')
+            token_count = c.fetchone()[0]
+            c.execute('SELECT COUNT(*) FROM kick_accounts')
+            account_count = c.fetchone()[0]
+            if token_count == 0 and account_count == 0:
+                with open(BACKUP_FILE, 'r', encoding='utf-8') as f:
+                    saved_data = json.load(f)
+                conn.close()
+                restore_all_data(saved_data)
+                return
+        except Exception as e:
+            logger.error(f'Auto-restore error: {e}')
+
     conn.close()
 
 
@@ -132,6 +158,7 @@ def set_setting(key, value):
     c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (key, value))
     conn.commit()
     conn.close()
+    save_backup_file()
 
 
 # ──────────────────────────────────────────────
@@ -146,6 +173,7 @@ def add_ai_token(name, token, base_url, model):
     id_ = c.lastrowid
     conn.commit()
     conn.close()
+    save_backup_file()
     return id_
 
 
@@ -191,6 +219,7 @@ def delete_ai_token(token_id):
     c.execute('DELETE FROM ai_tokens WHERE id=?', (token_id,))
     conn.commit()
     conn.close()
+    save_backup_file()
 
 
 # ──────────────────────────────────────────────
@@ -205,6 +234,7 @@ def add_kick_account(username, token):
     id_ = c.lastrowid
     conn.commit()
     conn.close()
+    save_backup_file()
     return id_
 
 
@@ -236,6 +266,7 @@ def delete_kick_account(account_id):
     c.execute('DELETE FROM kick_accounts WHERE id=?', (account_id,))
     conn.commit()
     conn.close()
+    save_backup_file()
 
 
 # ──────────────────────────────────────────────
@@ -259,6 +290,7 @@ def add_bot(data):
     id_ = c.lastrowid
     conn.commit()
     conn.close()
+    save_backup_file()
     return id_
 
 
@@ -287,6 +319,7 @@ def update_bot(bot_id, data):
     c.execute(f'UPDATE bots SET {set_clause} WHERE id=?', values)
     conn.commit()
     conn.close()
+    save_backup_file()
 
 
 def delete_bot(bot_id):
@@ -295,6 +328,7 @@ def delete_bot(bot_id):
     c.execute('DELETE FROM bots WHERE id=?', (bot_id,))
     conn.commit()
     conn.close()
+    save_backup_file()
 
 
 def insert_default_bots():
@@ -353,3 +387,128 @@ def get_message_logs(limit=200):
     cols = ['id', 'msg_type', 'username', 'content', 'bot_name',
             'analysis', 'status', 'error_msg', 'timestamp']
     return list(reversed([dict(zip(cols, r)) for r in rows]))
+
+
+# ──────────────────────────────────────────────
+# Persistent Storage & Auto-Backup
+# ──────────────────────────────────────────────
+
+def export_all_data() -> dict:
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # 1. AI Tokens
+    c.execute('SELECT id, name, token_enc, base_url, model, created_at FROM ai_tokens')
+    ai_tokens = []
+    for r in c.fetchall():
+        raw_tok = decrypt(r[2])
+        if raw_tok:
+            ai_tokens.append({
+                'name': r[1],
+                'token': raw_tok,
+                'base_url': r[3],
+                'model': r[4]
+            })
+            
+    # 2. Kick Accounts
+    c.execute('SELECT id, username, token_enc, is_active, created_at FROM kick_accounts')
+    kick_accounts = []
+    for r in c.fetchall():
+        raw_tok = decrypt(r[2])
+        if raw_tok:
+            kick_accounts.append({
+                'username': r[1],
+                'token': raw_tok,
+                'is_active': r[3]
+            })
+            
+    # 3. Bots
+    c.execute('''SELECT id, name, personality, style, interests, enabled, response_chance,
+                        min_delay, max_delay, daily_limit, ai_token_id, kick_account_id, system_prompt
+                 FROM bots''')
+    bots = []
+    for r in c.fetchall():
+        bots.append({
+            'name': r[1], 'personality': r[2], 'style': r[3], 'interests': r[4],
+            'enabled': r[5], 'response_chance': r[6], 'min_delay': r[7], 'max_delay': r[8],
+            'daily_limit': r[9], 'ai_token_id': r[10], 'kick_account_id': r[11],
+            'system_prompt': r[12]
+        })
+        
+    # 4. Settings
+    c.execute('SELECT key, value FROM settings')
+    settings = {r[0]: r[1] for r in c.fetchall()}
+    
+    conn.close()
+    return {
+        'ai_tokens': ai_tokens,
+        'kick_accounts': kick_accounts,
+        'bots': bots,
+        'settings': settings
+    }
+
+
+def save_backup_file():
+    try:
+        data = export_all_data()
+        with open(BACKUP_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f'save_backup_file error: {e}')
+
+
+def restore_all_data(data: dict) -> bool:
+    if not isinstance(data, dict):
+        return False
+        
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    # 1. AI Tokens restore
+    for t in data.get('ai_tokens', []):
+        name = t.get('name')
+        token = t.get('token')
+        base_url = t.get('base_url', 'https://api.openai.com/v1')
+        model = t.get('model', 'gpt-4o-mini')
+        if name and token:
+            c.execute('SELECT id FROM ai_tokens WHERE name=?', (name,))
+            if not c.fetchone():
+                c.execute('INSERT INTO ai_tokens (name,token_enc,base_url,model) VALUES (?,?,?,?)',
+                          (name, encrypt(token), base_url, model))
+                          
+    # 2. Kick Accounts restore
+    for a in data.get('kick_accounts', []):
+        username = a.get('username')
+        token = a.get('token')
+        is_active = a.get('is_active', 1)
+        if username and token:
+            c.execute('SELECT id FROM kick_accounts WHERE username=?', (username,))
+            if not c.fetchone():
+                c.execute('INSERT INTO kick_accounts (username,token_enc,is_active) VALUES (?,?,?)',
+                          (username, encrypt(token), is_active))
+                          
+    # 3. Bots restore
+    for b in data.get('bots', []):
+        name = b.get('name')
+        if name:
+            c.execute('SELECT id FROM bots WHERE name=?', (name,))
+            if not c.fetchone():
+                c.execute('''INSERT INTO bots
+                    (name,personality,style,interests,enabled,response_chance,
+                     min_delay,max_delay,daily_limit,ai_token_id,kick_account_id,system_prompt)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    (name, b.get('personality',''), b.get('style',''), b.get('interests',''),
+                     b.get('enabled', 1), b.get('response_chance', 0.35),
+                     b.get('min_delay', 8), b.get('max_delay', 45),
+                     b.get('daily_limit', 50), b.get('ai_token_id'),
+                     b.get('kick_account_id'), b.get('system_prompt','')))
+                     
+    # 4. Settings restore
+    for k, v in data.get('settings', {}).items():
+        c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, v))
+        
+    conn.commit()
+    conn.close()
+    
+    save_backup_file()
+    return True

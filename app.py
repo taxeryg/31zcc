@@ -19,7 +19,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 
 import storage
@@ -34,7 +34,11 @@ storage.init_db()
 storage.insert_default_bots()
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
-app.secret_key = os.environ.get('SECRET_KEY', 'kick_ai_bot_s3cr3t_2026_xK9')
+app.secret_key = os.environ.get('SECRET_KEY', 'kick_ai_bot_s3cr3t_2026_xK9_egeazakli_auth')
+app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30  # 30 gün kalıcı oturum
+
+ADMIN_USERNAME = os.environ.get('ADMIN_USER', 'egeazakli')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASS', 'ege123')
 
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
@@ -76,7 +80,90 @@ def _get_or_create_pipeline() -> MessagePipeline:
 
 
 # ═══════════════════════════════════════════════
-# Routes
+# Auth Guard & Login Routes
+# ═══════════════════════════════════════════════
+
+@app.before_request
+def auth_guard():
+    # Statik dosyalar serbest
+    if request.path.startswith('/static/'):
+        return
+    # Login sayfaları ve API'si serbest
+    if request.path in ('/login', '/api/login'):
+        return
+        
+    # Oturum kontrolü
+    if not session.get('logged_in'):
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'Giriş yapmanız gerekiyor', 'auth_required': True}), 401
+        return redirect(url_for('login'))
+
+
+@app.route('/login', methods=['GET'])
+def login():
+    if session.get('logged_in'):
+        return redirect('/')
+    return render_template('login.html')
+
+
+@app.route('/api/login', methods=['POST'])
+def login_api():
+    data = request.get_json() or {}
+    username = (data.get('username') or '').strip()
+    password = (data.get('password') or '').strip()
+    
+    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        session['logged_in'] = True
+        session['username'] = username
+        session.permanent = True
+        return jsonify({'success': True, 'redirect': '/'})
+        
+    return jsonify({'error': 'Kullanıcı adı veya şifre hatalı!'}), 401
+
+
+@app.route('/logout', methods=['GET', 'POST'])
+def logout():
+    session.clear()
+    return redirect('/login')
+
+
+# ═══════════════════════════════════════════════
+# Persistent Sync Routes
+# ═══════════════════════════════════════════════
+
+@app.route('/api/sync/backup', methods=['GET'])
+def sync_backup():
+    return jsonify(storage.export_all_data())
+
+
+@app.route('/api/sync/restore', methods=['POST'])
+def sync_restore():
+    data = request.get_json() or {}
+    ok = storage.restore_all_data(data)
+    return jsonify({'success': ok})
+
+
+@app.route('/api/sync/status', methods=['GET'])
+def sync_status():
+    import sqlite3
+    conn = sqlite3.connect(storage.DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM ai_tokens')
+    ai_count = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM kick_accounts')
+    kick_count = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM bots')
+    bots_count = c.fetchone()[0]
+    conn.close()
+    return jsonify({
+        'ai_tokens': ai_count,
+        'kick_accounts': kick_count,
+        'bots': bots_count
+    })
+
+
+# ═══════════════════════════════════════════════
+# Page Routes
 # ═══════════════════════════════════════════════
 
 @app.route('/')

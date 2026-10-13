@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TaxerAI Dashboard — Giriş Yap</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <style>
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: radial-gradient(circle at 50% 20%, rgba(124, 58, 237, 0.15) 0%, rgba(8, 8, 15, 1) 70%);
+      padding: 20px;
+    }
+
+    .login-container {
+      width: 100%;
+      max-width: 420px;
+      background: rgba(20, 20, 42, 0.85);
+      border: 1px solid rgba(83, 252, 24, 0.25);
+      border-radius: 20px;
+      padding: 40px 32px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(83, 252, 24, 0.1);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      animation: fadeIn 0.4s ease-out;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .login-logo {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 28px;
+    }
+
+    .login-logo-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      background: linear-gradient(135deg, #53fc18, #1e8a04);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      box-shadow: 0 4px 20px rgba(83, 252, 24, 0.4);
+    }
+
+    .login-logo h1 {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+
+    .login-logo p {
+      font-size: 0.85rem;
+      color: var(--text2);
+    }
+
+    .login-group {
+      margin-bottom: 18px;
+    }
+
+    .login-group label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .login-input {
+      width: 100%;
+      padding: 14px 16px;
+      background: rgba(0, 0, 0, 0.45);
+      border: 1.5px solid rgba(124, 58, 237, 0.25);
+      border-radius: 12px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+      transition: all 0.2s;
+    }
+
+    .login-input:focus {
+      border-color: #53fc18;
+      box-shadow: 0 0 0 3px rgba(83, 252, 24, 0.15);
+      background: rgba(0, 0, 0, 0.65);
+    }
+
+    .login-error {
+      display: none;
+      padding: 12px;
+      border-radius: 10px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #ef4444;
+      font-size: 0.85rem;
+      margin-bottom: 18px;
+      text-align: center;
+    }
+
+    .login-btn {
+      width: 100%;
+      padding: 14px;
+      background: linear-gradient(135deg, #53fc18 0%, #1e8a04 100%);
+      color: #061202;
+      font-size: 1rem;
+      font-weight: 800;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 20px rgba(83, 252, 24, 0.35);
+      transition: all 0.2s;
+      letter-spacing: 0.3px;
+      margin-top: 6px;
+    }
+
+    .login-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 25px rgba(83, 252, 24, 0.45);
+    }
+
+    .login-btn:active {
+      transform: translateY(1px);
+    }
+
+    .login-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="login-container">
+    <div class="login-logo">
+      <div class="login-logo-icon">🤖</div>
+      <h1>TaxerAI <span style="color:#53fc18">Bot</span></h1>
+      <p>Yönetici Paneli Girişi</p>
+    </div>
+
+    <div id="login-error" class="login-error"></div>
+
+    <form id="login-form" onsubmit="handleLogin(event)">
+      <div class="login-group">
+        <label for="username">Kullanıcı Adı</label>
+        <input type="text" id="username" class="login-input" placeholder="Kullanıcı adınızı girin" required autofocus autocomplete="username">
+      </div>
+
+      <div class="login-group">
+        <label for="password">Şifre</label>
+        <input type="password" id="password" class="login-input" placeholder="••••••••" required autocomplete="current-password">
+      </div>
+
+      <button type="submit" id="submit-btn" class="login-btn">Giriş Yap</button>
+    </form>
+  </div>
+
+  <script>
+    async function handleLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+      const btn = document.getElementById('submit-btn');
+      const errBox = document.getElementById('login-error');
+
+      errBox.style.display = 'none';
+      btn.disabled = true;
+      btn.textContent = 'Giriş yapılıyor...';
+
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          localStorage.setItem('kick_user', username);
+          window.location.href = data.redirect || '/';
+        } else {
+          errBox.textContent = data.error || 'Giriş başarısız!';
+          errBox.style.display = 'block';
+        }
+      } catch (err) {
+        errBox.textContent = 'Sunucuya bağlanırken bir hata oluştu.';
+        errBox.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Giriş Yap';
+      }
+    }
+  </script>
+</body>
+</html>

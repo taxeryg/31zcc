@@ -10,3 +10,4 @@ tokens.json
 **/tokens.json
 *tokens*.txt
 raw_tokens.txt
+persistent_storage.json
