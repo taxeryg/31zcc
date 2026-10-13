@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="tr">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TaxerAI Dashboard — Giriş Yap</title>
+  <title>TaxerAI Dashboard — Sign In</title>
   <link rel="stylesheet" href="/static/css/style.css">
   <style>
     body {
@@ -147,23 +147,23 @@
     <div class="login-logo">
       <div class="login-logo-icon">🤖</div>
       <h1>TaxerAI <span style="color:#53fc18">Bot</span></h1>
-      <p>Yönetici Paneli Girişi</p>
+      <p>Admin Dashboard Sign In</p>
     </div>
 
     <div id="login-error" class="login-error"></div>
 
     <form id="login-form" onsubmit="handleLogin(event)">
       <div class="login-group">
-        <label for="username">Kullanıcı Adı</label>
-        <input type="text" id="username" class="login-input" placeholder="Kullanıcı adınızı girin" required autofocus autocomplete="username">
+        <label for="username">Username</label>
+        <input type="text" id="username" class="login-input" placeholder="Enter your username" required autofocus autocomplete="username">
       </div>
 
       <div class="login-group">
-        <label for="password">Şifre</label>
+        <label for="password">Password</label>
         <input type="password" id="password" class="login-input" placeholder="••••••••" required autocomplete="current-password">
       </div>
 
-      <button type="submit" id="submit-btn" class="login-btn">Giriş Yap</button>
+      <button type="submit" id="submit-btn" class="login-btn">Sign In</button>
     </form>
   </div>
 
@@ -177,7 +177,7 @@
 
       errBox.style.display = 'none';
       btn.disabled = true;
-      btn.textContent = 'Giriş yapılıyor...';
+      btn.textContent = 'Signing in...';
 
       try {
         const res = await fetch('/api/login', {
@@ -191,15 +191,15 @@
           localStorage.setItem('kick_user', username);
           window.location.href = data.redirect || '/';
         } else {
-          errBox.textContent = data.error || 'Giriş başarısız!';
+          errBox.textContent = data.error || 'Authentication failed!';
           errBox.style.display = 'block';
         }
       } catch (err) {
-        errBox.textContent = 'Sunucuya bağlanırken bir hata oluştu.';
+        errBox.textContent = 'An error occurred while connecting to the server.';
         errBox.style.display = 'block';
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Giriş Yap';
+        btn.textContent = 'Sign In';
       }
     }
   </script>

@@ -118,7 +118,7 @@ def login_api():
         session.permanent = True
         return jsonify({'success': True, 'redirect': '/'})
         
-    return jsonify({'error': 'Kullanıcı adı veya şifre hatalı!'}), 401
+    return jsonify({'error': 'Invalid username or password!'}), 401
 
 
 @app.route('/logout', methods=['GET', 'POST'])
