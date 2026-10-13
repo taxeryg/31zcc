@@ -497,14 +497,28 @@ async function deleteEmote(emoteStr) {
 
 function openEmotesModal() {
   const m = document.getElementById('modal-emotes');
-  if (m) m.classList.add('active');
-  renderEmotesUI();
+  if (m) {
+    m.classList.add('open');
+    m.classList.add('active');
+    renderEmotesUI();
+  }
 }
 
 function closeEmotesModal() {
   const m = document.getElementById('modal-emotes');
-  if (m) m.classList.remove('active');
+  if (m) {
+    m.classList.remove('open');
+    m.classList.remove('active');
+  }
 }
+
+window.openEmotesModal = openEmotesModal;
+window.closeEmotesModal = closeEmotesModal;
+window.sendRandomEmote = sendRandomEmote;
+window.addSingleEmote = addSingleEmote;
+window.addBulkEmotes = addBulkEmotes;
+window.deleteEmote = deleteEmote;
+window.insertEmoteToInput = insertEmoteToInput;
 
 // ── Bots ────────────────────────────────────
 async function loadBots() {
@@ -727,8 +741,15 @@ async function sendBotMessage() {
 
 // ── AI Tokens ──────────────────────────────
 async function loadAiTokens() {
-  STATE.aiTokens = await api('GET', '/api/tokens');
-  renderAiTokens();
+  try {
+    const list = await api('GET', '/api/tokens');
+    if (Array.isArray(list)) {
+      STATE.aiTokens = list;
+      renderAiTokens();
+    }
+  } catch (err) {
+    console.error('loadAiTokens error:', err);
+  }
 }
 
 function renderAiTokens() {
@@ -796,9 +817,16 @@ async function testAiToken(id, btn) {
 
 // ── Kick Accounts ──────────────────────────
 async function loadKickAccounts() {
-  STATE.kickAccounts = await api('GET', '/api/kick-accounts');
-  renderKickAccounts();
-  loadBotOptions();
+  try {
+    const list = await api('GET', '/api/kick-accounts');
+    if (Array.isArray(list)) {
+      STATE.kickAccounts = list;
+      renderKickAccounts();
+      loadBotOptions();
+    }
+  } catch (err) {
+    console.error('loadKickAccounts error:', err);
+  }
 }
 
 function renderKickAccounts() {

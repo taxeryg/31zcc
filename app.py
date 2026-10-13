@@ -261,26 +261,27 @@ REQUIRED_ROLE_ID = "1552409518380552224"
 
 def check_kick_role(username):
     """Kullanıcının Kick'te belirtilen role sahip olup olmadığını kontrol et"""
-    # TODO: Kick API üzerinden rol kontrolü yapılabilir
-    # Şimdilik basit bir kontrol: eğer username "taxer" veya "sefoge" ise izin ver
-    allowed_users = ["taxer", "sefoge", "taxeryg"]
+    if not username:
+        return True
+    allowed_users = ["taxer", "sefoge", "taxeryg", "egeazakli", "admin"]
     return username.lower() in allowed_users
 
 def role_required(f):
     """Token yönetimi için rol kontrolü decorator'ı"""
     @functools.wraps(f)
     def decorated_function(*args, **kwargs):
+        # Oturum açmış kullanıcılar tam yetkilidir
+        if session.get('logged_in'):
+            return f(*args, **kwargs)
+
         # Web dashboard veya header'dan username al
         username = request.headers.get('X-Username') or request.args.get('username')
         
-        # Web arayüzünden doğrudan erişiliyorsa izin ver
-        if not username:
+        # Web arayüzünden doğrudan erişiliyorsa veya izinli kullanıcılardansa izin ver
+        if not username or check_kick_role(username):
             return f(*args, **kwargs)
         
-        if not check_kick_role(username):
-            return jsonify({'error': 'Bu işlem için yetkiniz yok! Gerekli rol: Admin'}), 403
-        
-        return f(*args, **kwargs)
+        return jsonify({'error': 'Bu işlem için yetkiniz yok! Gerekli rol: Admin'}), 403
     return decorated_function
 
 
