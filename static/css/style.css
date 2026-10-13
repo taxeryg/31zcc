@@ -953,3 +953,64 @@ label {
   .hesap-grid { grid-template-columns: 1fr !important; }
 }
 
+/* Kick Emotes Bar & Items */
+.chat-emote-section {
+  background: var(--bg2);
+  border-top: 1px solid var(--border);
+  padding: 8px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.quick-emote-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 0.75rem;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: var(--transition);
+  user-select: none;
+}
+.quick-emote-chip:hover {
+  background: rgba(83, 252, 24, 0.12);
+  border-color: rgba(83, 252, 24, 0.45);
+  color: #53fc18;
+  transform: translateY(-1px);
+}
+.quick-emote-chip:active {
+  transform: translateY(0);
+}
+.emote-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  transition: var(--transition);
+}
+.emote-list-item:hover {
+  border-color: rgba(83, 252, 24, 0.3);
+}
+.kick-emote-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(83, 252, 24, 0.08);
+  border: 1px solid rgba(83, 252, 24, 0.25);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.8rem;
+  color: #53fc18;
+  vertical-align: middle;
+}
+

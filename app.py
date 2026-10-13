@@ -582,6 +582,113 @@ def bot_manual_send(bot_id):
     return jsonify({'success': success, 'response': resp[:200]})
 
 
+# ── Kick Emotes ──────────────────────────────
+
+@app.route('/api/emotes', methods=['GET'])
+def get_emotes_route():
+    return jsonify(storage.get_emotes())
+
+
+@app.route('/api/emotes', methods=['POST'])
+def add_emote_route():
+    data = request.get_json() or {}
+    emote = (data.get('emote') or '').strip()
+    emotes_bulk = data.get('emotes')
+    
+    if emotes_bulk and isinstance(emotes_bulk, list):
+        for e in emotes_bulk:
+            if isinstance(e, str) and e.strip():
+                storage.add_emote(e.strip())
+        return jsonify({'success': True, 'emotes': storage.get_emotes()})
+        
+    if not emote:
+        return jsonify({'error': 'Emoji kodu gerekli (Örn: [emote:1579033:emojiAstonished])'}), 400
+        
+    updated = storage.add_emote(emote)
+    return jsonify({'success': True, 'emotes': updated})
+
+
+@app.route('/api/emotes', methods=['DELETE'])
+def delete_emote_route():
+    data = request.get_json() or {}
+    emote = (data.get('emote') or '').strip()
+    if not emote:
+        return jsonify({'error': 'Silinecek emoji gerekli'}), 400
+    updated = storage.delete_emote(emote)
+    return jsonify({'success': True, 'emotes': updated})
+
+
+@app.route('/api/emotes/send-random', methods=['POST'])
+def send_random_emote():
+    data = request.get_json() or {}
+    bot_id_choice = data.get('bot_id', 'random')  # 'random', 'all', or int
+    chatroom_id = data.get('chatroom_id') or (
+        _kick_client.chatroom_id if _kick_client else None
+    )
+    if not chatroom_id:
+        return jsonify({'error': 'Önce bir Kick kanalına bağlanmalısınız!'}), 400
+
+    emotes = storage.get_emotes()
+    if not emotes:
+        return jsonify({'error': 'Kayıtlı Kick emojisi bulunamadı!'}), 400
+
+    bots = storage.get_bots()
+    enabled_bots = [b for b in bots if b.get('enabled') and b.get('kick_account_id')]
+    
+    targets = []
+    if bot_id_choice == 'all':
+        targets = enabled_bots
+    elif bot_id_choice == 'random':
+        if enabled_bots:
+            targets = [random.choice(enabled_bots)]
+    else:
+        try:
+            bid = int(bot_id_choice)
+            target = next((b for b in bots if b['id'] == bid), None)
+            if target:
+                targets = [target]
+        except Exception:
+            pass
+
+    results = []
+    if not targets:
+        accounts = storage.get_kick_accounts()
+        active_accounts = [a for a in accounts if a.get('is_active')]
+        if not active_accounts:
+            return jsonify({'error': 'Mesaj atacak aktif bot veya Kick hesabı bulunamadı!'}), 400
+        
+        acc = random.choice(active_accounts)
+        emote = random.choice(emotes)
+        success, resp = _bot_manager.send_manual_message(acc['id'], chatroom_id, emote)
+        if success:
+            socketio.emit('chat_message', {
+                'username': acc.get('username') or 'Kick Bot',
+                'content': emote,
+                'type': 'bot',
+                'msg_type': 'bot',
+            })
+            results.append({'sender': acc.get('username'), 'emote': emote, 'success': True})
+        else:
+            return jsonify({'error': f'Emoji gönderilemedi: {resp}'}), 500
+    else:
+        for bot in targets:
+            emote = random.choice(emotes)
+            success, resp = _bot_manager.send_message(bot, chatroom_id, emote)
+            if success:
+                socketio.emit('chat_message', {
+                    'username': bot['name'],
+                    'content': emote,
+                    'type': 'bot',
+                    'bot_name': bot['name'],
+                    'msg_type': 'bot',
+                })
+                results.append({'sender': bot['name'], 'emote': emote, 'success': True})
+            else:
+                results.append({'sender': bot['name'], 'error': resp, 'success': False})
+
+    return jsonify({'success': True, 'results': results})
+
+
 # ── Pipeline ──────────────────────────────────
 
 @app.route('/api/pipeline/toggle', methods=['POST'])

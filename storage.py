@@ -512,3 +512,47 @@ def restore_all_data(data: dict) -> bool:
     
     save_backup_file()
     return True
+
+
+# ──────────────────────────────────────────────
+# Kick Emotes Management
+# ──────────────────────────────────────────────
+
+DEFAULT_KICK_EMOTES = [
+    "[emote:1579033:emojiAstonished]",
+    "[emote:1579028:emojiLaughing]",
+    "[emote:1579030:emojiFire]",
+    "[emote:1579029:emojiCool]",
+    "[emote:1579031:emojiHeart]"
+]
+
+def get_emotes() -> list[str]:
+    raw = get_setting('kick_emotes')
+    if raw:
+        try:
+            val = json.loads(raw)
+            if isinstance(val, list) and val:
+                return val
+        except Exception:
+            pass
+    return list(DEFAULT_KICK_EMOTES)
+
+def set_emotes(emotes_list: list[str]):
+    set_setting('kick_emotes', json.dumps(emotes_list, ensure_ascii=False))
+
+def add_emote(emote_str: str) -> list[str]:
+    emote_str = emote_str.strip()
+    if not emote_str:
+        return get_emotes()
+    emotes = get_emotes()
+    if emote_str not in emotes:
+        emotes.append(emote_str)
+        set_emotes(emotes)
+    return emotes
+
+def delete_emote(emote_str: str) -> list[str]:
+    emotes = get_emotes()
+    if emote_str in emotes:
+        emotes.remove(emote_str)
+        set_emotes(emotes)
+    return emotes

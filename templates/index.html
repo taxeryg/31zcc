@@ -111,6 +111,34 @@
                 </div>
               </div>
 
+              <!-- Kick Emote Quick Bar & Random Send -->
+              <div class="chat-emote-section">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span style="font-size:0.8rem;font-weight:700;color:#53fc18;display:inline-flex;align-items:center;gap:4px">
+                      <span>🎭</span> <span>Kick Emojileri:</span>
+                    </span>
+                    <select id="emote-bot-select" style="font-size:0.8rem;padding:5px 8px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);outline:none;cursor:pointer">
+                      <option value="random">🎲 Rastgele Aktif Bot</option>
+                      <option value="all">👥 Tüm Aktif Botlar</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" id="btn-send-random-emote" onclick="sendRandomEmote()" style="font-size:0.8rem;padding:5px 12px;font-weight:600;display:inline-flex;align-items:center;gap:6px" title="Seçili bot(lar) kanala rastgele bir Kick emojisi atar">
+                      <span>🎲</span> <span>Rastgele Emoji At</span>
+                    </button>
+                  </div>
+                  <div>
+                    <button class="btn btn-ghost btn-sm" onclick="openEmotesModal()" style="font-size:0.78rem;padding:4px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer" title="Yeni Kick emojileri ekle veya düzenle">
+                      ⚙️ Emojileri Yönet (<span id="emotes-count-badge">0</span>)
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Tıklanabilir Hızlı Emoji Çipleri -->
+                <div id="quick-emotes-bar" style="display:flex;align-items:center;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:thin">
+                  <span class="text-xs text-muted">Emojiler yükleniyor…</span>
+                </div>
+              </div>
+
               <!-- Manual send -->
               <div class="chat-input-area">
                 <div style="font-size:0.75rem;color:var(--text3);margin-bottom:6px">Manuel mesaj gönder</div>
@@ -689,6 +717,56 @@
       <div class="modal-footer">
         <button class="btn btn-ghost" onclick="closeBotSendModal()">İptal</button>
         <button class="btn btn-primary" onclick="sendBotMessage()">🚀 Gönder</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Kick Emotes Management Modal -->
+  <div class="modal-overlay" id="modal-emotes" onclick="if(event.target===this)closeEmotesModal()">
+    <div class="modal" style="width:540px;max-width:95vw">
+      <div class="modal-header">
+        <div class="modal-title">🎭 Kick Emojileri Yönetimi</div>
+        <button class="modal-close" onclick="closeEmotesModal()">✕</button>
+      </div>
+      <div class="modal-body" style="max-height:75vh;overflow-y:auto">
+        <div style="background:rgba(83,252,24,0.06);border:1px solid rgba(83,252,24,0.2);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.8rem;color:var(--text);line-height:1.5">
+          💡 <strong>Kick Emoji Formatı:</strong><br>
+          Kick üzerindeki emojiler <code>[emote:1579033:emojiAstonished]</code> biçimindedir. Buraya eklediğin emojiler botlar tarafından chate rastgele atılabilir veya chat kutusuna tek tıkla eklenebilir.
+        </div>
+
+        <!-- Tekli Ekleme -->
+        <div class="form-group" style="margin-bottom:14px">
+          <label style="font-size:0.8rem;font-weight:600">Tekli Emoji Ekle</label>
+          <div style="display:flex;gap:8px">
+            <input id="emote-single-input" type="text" placeholder="[emote:1579033:emojiAstonished]" style="flex:1;font-family:monospace;font-size:0.85rem">
+            <button class="btn btn-primary btn-sm" onclick="addSingleEmote()" style="white-space:nowrap">+ Ekle</button>
+          </div>
+        </div>
+
+        <!-- Toplu Ekleme -->
+        <div class="form-group" style="margin-bottom:16px">
+          <label style="font-size:0.8rem;font-weight:600">Toplu Emoji Ekle (Her satıra bir adet)</label>
+          <textarea id="emote-bulk-input" rows="3" placeholder="[emote:1579033:emojiAstonished]&#10;[emote:1579028:emojiLaughing]&#10;[emote:1579030:emojiFire]" style="width:100%;font-family:monospace;font-size:0.82rem;background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:8px;color:var(--text);resize:vertical"></textarea>
+          <div style="display:flex;justify-content:flex-end;margin-top:6px">
+            <button class="btn btn-cyan btn-sm" onclick="addBulkEmotes()">⚡ Toplu Ekle</button>
+          </div>
+        </div>
+
+        <div class="divider" style="margin:14px 0"></div>
+
+        <!-- Kayıtlı Emojiler Listesi -->
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <span style="font-size:0.85rem;font-weight:600">Kayıtlı Emojiler (<span id="modal-emotes-count">0</span>)</span>
+            <span class="text-xs text-dim">Sunucuda &amp; yerel yedekte kalıcıdır</span>
+          </div>
+          <div id="modal-emotes-list" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;padding-right:4px">
+            <!-- Emote items rendered here -->
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" onclick="closeEmotesModal()">Kapat</button>
       </div>
     </div>
   </div>

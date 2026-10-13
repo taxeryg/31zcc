@@ -11,6 +11,7 @@ let STATE = {
   bots: [],
   aiTokens: [],
   kickAccounts: [],
+  emotes: [],
 };
 let chatAutoScroll = true;
 let currentTab = 'chat';
@@ -203,6 +204,13 @@ async function togglePipeline() {
   toast(STATE.pipelineEnabled ? 'Otomatik yanıt sistemi başlatıldı' : 'Otomatik yanıt sistemi durduruldu', 'info');
 }
 
+function formatChatContent(content) {
+  const safe = esc(content);
+  return safe.replace(/\[emote:(\d+):([a-zA-Z0-9_]+)\]/g, (match, id, name) => {
+    return `<span class="kick-emote-tag" title="${match}"><img src="https://files.kick.com/emotes/${id}/fullsize" alt="${name}" onerror="this.style.display='none'" style="height:20px;width:20px;object-fit:contain;vertical-align:middle"> <span>${name}</span></span>`;
+  });
+}
+
 // ── Chat messages ──────────────────────────
 function appendChatMessage(msg) {
   const el = document.getElementById('chat-messages');
@@ -223,7 +231,7 @@ function appendChatMessage(msg) {
         ${type === 'bot' ? '<span class="badge badge-purple" style="font-size:0.65rem">AI BOT</span>' : ''}
         <span class="chat-msg-time">${nowTime()}</span>
       </div>
-      <div class="chat-msg-content">${esc(msg.content)}</div>
+      <div class="chat-msg-content">${formatChatContent(msg.content)}</div>
     </div>
   `;
   el.appendChild(div);
@@ -295,6 +303,207 @@ async function sendManualMessage() {
     document.getElementById('manual-msg-input').value = '';
     toast('Mesaj gönderildi', 'success');
   } catch {}
+}
+
+// ── Kick Emotes ─────────────────────────────
+async function loadEmotes() {
+  try {
+    const list = await api('GET', '/api/emotes');
+    if (Array.isArray(list)) {
+      STATE.emotes = list;
+      renderEmotesUI();
+    }
+  } catch (err) {
+    console.error('loadEmotes error:', err);
+  }
+}
+
+function updateEmoteBotSelect() {
+  const sel = document.getElementById('emote-bot-select');
+  if (!sel) return;
+  const currentVal = sel.value;
+  let html = `
+    <option value="random">🎲 Rastgele Aktif Bot</option>
+    <option value="all">👥 Tüm Aktif Botlar</option>
+  `;
+  const activeBots = (STATE.bots || []).filter(b => b.enabled);
+  activeBots.forEach(bot => {
+    html += `<option value="${bot.id}">🤖 ${esc(bot.name)}</option>`;
+  });
+  sel.innerHTML = html;
+  if (currentVal && Array.from(sel.options).some(o => o.value === currentVal)) {
+    sel.value = currentVal;
+  }
+}
+
+function renderEmotesUI() {
+  const countBadge = document.getElementById('emotes-count-badge');
+  if (countBadge) countBadge.textContent = (STATE.emotes || []).length;
+  const modalCount = document.getElementById('modal-emotes-count');
+  if (modalCount) modalCount.textContent = (STATE.emotes || []).length;
+
+  // 1. Quick Bar
+  const quickBar = document.getElementById('quick-emotes-bar');
+  if (quickBar) {
+    if (!STATE.emotes || !STATE.emotes.length) {
+      quickBar.innerHTML = '<span class="text-xs text-muted">Kayıtlı Kick emojisi yok. "Emojileri Yönet"ten ekleyin.</span>';
+    } else {
+      quickBar.innerHTML = STATE.emotes.map(e => {
+        const match = e.match(/\[emote:(\d+):([a-zA-Z0-9_]+)\]/);
+        const id = match ? match[1] : '';
+        const name = match ? match[2] : e;
+        const imgTag = id ? `<img src="https://files.kick.com/emotes/${id}/fullsize" alt="${name}" onerror="this.style.display='none'" style="height:18px;width:18px;object-fit:contain;vertical-align:middle">` : '🎭';
+        return `
+          <div class="quick-emote-chip" onclick="insertEmoteToInput('${esc(e)}')" title="Tıkla: Manuel mesaja ekle (${esc(e)})">
+            ${imgTag}
+            <span>${esc(name)}</span>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+
+  // 2. Modal List
+  const modalList = document.getElementById('modal-emotes-list');
+  if (modalList) {
+    if (!STATE.emotes || !STATE.emotes.length) {
+      modalList.innerHTML = '<div class="text-xs text-muted" style="padding:10px;text-align:center">Hiç emoji eklenmemiş.</div>';
+    } else {
+      modalList.innerHTML = STATE.emotes.map(e => {
+        const match = e.match(/\[emote:(\d+):([a-zA-Z0-9_]+)\]/);
+        const id = match ? match[1] : '';
+        const name = match ? match[2] : e;
+        const imgTag = id ? `<img src="https://files.kick.com/emotes/${id}/fullsize" alt="${name}" onerror="this.style.display='none'" style="height:20px;width:20px;object-fit:contain;vertical-align:middle">` : '🎭';
+        return `
+          <div class="emote-list-item">
+            <div style="display:flex;align-items:center;gap:8px;overflow:hidden">
+              ${imgTag}
+              <span style="color:var(--green);font-weight:600">${esc(name)}</span>
+              <span class="text-xs text-dim" style="text-overflow:ellipsis;overflow:hidden;white-space:nowrap">${esc(e)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button class="btn btn-ghost btn-xs" onclick="insertEmoteToInput('${esc(e)}');closeEmotesModal()" title="Mesaj kutusuna ekle">➕</button>
+              <button class="btn btn-ghost btn-xs" onclick="deleteEmote('${esc(e)}')" style="color:var(--red)" title="Sil">🗑️</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+  }
+}
+
+function insertEmoteToInput(code) {
+  const input = document.getElementById('manual-msg-input');
+  if (!input) return;
+  const cur = input.value.trim();
+  input.value = cur ? `${cur} ${code}` : code;
+  input.focus();
+  toast(`Emoji eklendi: ${code}`, 'info');
+}
+
+async function sendRandomEmote() {
+  const btn = document.getElementById('btn-send-random-emote');
+  const botSelect = document.getElementById('emote-bot-select');
+  const botChoice = botSelect ? botSelect.value : 'random';
+  const chatroom_id = STATE.chatroom_id;
+
+  if (!STATE.connected && !chatroom_id) {
+    toast('Önce Kick kanalına bağlanmalısınız!', 'error');
+    return;
+  }
+
+  if (!STATE.emotes || !STATE.emotes.length) {
+    toast('Hiç kayıtlı Kick emojisi yok! Önce emoji ekleyin.', 'error');
+    return;
+  }
+
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> <span>Gönderiliyor…</span>';
+  }
+
+  try {
+    const res = await api('POST', '/api/emotes/send-random', {
+      bot_id: botChoice,
+      chatroom_id: chatroom_id
+    });
+    if (res && res.success) {
+      const count = res.results ? res.results.filter(r => r.success).length : 1;
+      toast(`🎲 ${count} bot kanala rastgele emoji gönderdi!`, 'success');
+    }
+  } catch (err) {
+    console.error('Send random emote error:', err);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+async function addSingleEmote() {
+  const input = document.getElementById('emote-single-input');
+  if (!input) return;
+  const val = input.value.trim();
+  if (!val) {
+    toast('Lütfen bir Kick emoji kodu girin! (Örn: [emote:1579033:emojiAstonished])', 'error');
+    return;
+  }
+  try {
+    const res = await api('POST', '/api/emotes', { emote: val });
+    if (res && res.success) {
+      STATE.emotes = res.emotes;
+      renderEmotesUI();
+      input.value = '';
+      await syncCloudBackup();
+      toast('Emoji başarıyla eklendi! 🎉', 'success');
+    }
+  } catch (err) {}
+}
+
+async function addBulkEmotes() {
+  const textarea = document.getElementById('emote-bulk-input');
+  if (!textarea) return;
+  const lines = textarea.value.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!lines.length) {
+    toast('Lütfen en az bir emoji satırı girin!', 'error');
+    return;
+  }
+  try {
+    const res = await api('POST', '/api/emotes', { emotes: lines });
+    if (res && res.success) {
+      STATE.emotes = res.emotes;
+      renderEmotesUI();
+      textarea.value = '';
+      await syncCloudBackup();
+      toast(`${lines.length} adet emoji eklendi! ⚡`, 'success');
+    }
+  } catch (err) {}
+}
+
+async function deleteEmote(emoteStr) {
+  if (!confirm(`Bu emojiyi silmek istediğine emin misin?\n${emoteStr}`)) return;
+  try {
+    const res = await api('DELETE', '/api/emotes', { emote: emoteStr });
+    if (res && res.success) {
+      STATE.emotes = res.emotes;
+      renderEmotesUI();
+      await syncCloudBackup();
+      toast('Emoji silindi.', 'info');
+    }
+  } catch (err) {}
+}
+
+function openEmotesModal() {
+  const m = document.getElementById('modal-emotes');
+  if (m) m.classList.add('active');
+  renderEmotesUI();
+}
+
+function closeEmotesModal() {
+  const m = document.getElementById('modal-emotes');
+  if (m) m.classList.remove('active');
 }
 
 // ── Bots ────────────────────────────────────
@@ -377,12 +586,14 @@ function renderBots() {
       </div>
     `;
   }).join('');
+  updateEmoteBotSelect();
 }
 
 async function toggleBot(id, enabled) {
   await api('POST', `/api/bots/${id}/toggle`, { enabled });
   STATE.bots = STATE.bots.map(b => b.id === id ? { ...b, enabled: enabled ? 1 : 0 } : b);
   document.getElementById(`bot-card-${id}`)?.classList.toggle('disabled', !enabled);
+  updateEmoteBotSelect();
   toast(`Bot ${enabled ? 'başlatıldı' : 'durduruldu'}`, 'info');
 }
 
@@ -1218,7 +1429,7 @@ async function handleImportJson(e) {
       const data = JSON.parse(ev.target.result);
       await api('POST', '/api/sync/restore', data);
       await syncCloudBackup();
-      await Promise.all([loadAiTokens(), loadKickAccounts(), loadBots()]);
+      await Promise.all([loadAiTokens(), loadKickAccounts(), loadBots(), loadEmotes()]);
       toast('Yedek başarıyla geri yüklendi! ✅', 'success');
     } catch (err) {
       toast('Geçersiz yedek dosyası: ' + err.message, 'error');
@@ -1240,6 +1451,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       loadAiTokens(),
       loadKickAccounts(),
       loadBots(),
+      loadEmotes(),
     ]);
 
     // 3. Güncel hali tarayıcıya yedekle
