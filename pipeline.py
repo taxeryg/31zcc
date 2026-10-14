@@ -124,6 +124,14 @@ class MessagePipeline:
 
     def _process(self, message: dict):
         if not self.chatroom_id:
+            saved_cid = storage.get_setting('chatroom_id')
+            if saved_cid:
+                try:
+                    self.chatroom_id = int(saved_cid)
+                except Exception:
+                    pass
+
+        if not self.chatroom_id:
             return
 
         bots = storage.get_bots()

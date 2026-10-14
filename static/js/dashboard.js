@@ -293,16 +293,41 @@ function appendPipelineEvent(ev) {
 // ── Send chat message (manual) ──────────────
 async function sendManualMessage() {
   const content = document.getElementById('manual-msg-input').value.trim();
-  const accountId = document.getElementById('manual-account-select').value;
+  const sel = document.getElementById('manual-account-select');
+  const accountId = sel ? sel.value : '';
   if (!content) return;
-  if (!accountId) { toast('Hesap seçin', 'error'); return; }
-  const chatroom_id = STATE.chatroom_id;
-  if (!chatroom_id) { toast('Önce kanala bağlanın', 'error'); return; }
+
+  let chatroom_id = STATE.chatroom_id;
+  if (!chatroom_id) {
+    const chInp = document.getElementById('channel-input') || document.getElementById('kick-setup-input');
+    const ch = chInp ? chInp.value.trim() : '';
+    if (ch) {
+      toast('Kanala bağlanılıyor...', 'info');
+      const conn = await connectChannel(ch);
+      if (conn && conn.chatroom_id) {
+        chatroom_id = conn.chatroom_id;
+      }
+    }
+  }
+
+  if (!chatroom_id) {
+    toast('Önce kanala bağlanın veya kanal adı girin', 'error');
+    return;
+  }
+
+  const targetId = (!accountId || accountId === 'auto') ? 0 : accountId;
+
   try {
-    await api('POST', `/api/kick-accounts/${accountId}/send`, { content, chatroom_id });
+    const res = await api('POST', `/api/kick-accounts/${targetId}/send`, { content, chatroom_id });
+    if (res && res.success === false) {
+      toast(res.error || 'Mesaj gönderilemedi', 'error');
+      return;
+    }
     document.getElementById('manual-msg-input').value = '';
-    toast('Mesaj gönderildi', 'success');
-  } catch {}
+    toast('Mesaj gönderildi 🚀', 'success');
+  } catch (err) {
+    toast(err.message || 'Mesaj gönderilemedi', 'error');
+  }
 }
 
 // ── Kick Emotes ─────────────────────────────
@@ -733,10 +758,23 @@ function closeBotSendModal() {
 async function sendBotMessage() {
   const content = document.getElementById('bot-send-msg').value.trim();
   if (!content) return;
+  if (!STATE.chatroom_id) {
+    const chInp = document.getElementById('channel-input') || document.getElementById('kick-setup-input');
+    const ch = chInp ? chInp.value.trim() : '';
+    if (ch) await connectChannel(ch);
+  }
   if (!STATE.chatroom_id) { toast('Önce kanala bağlanın', 'error'); return; }
-  await api('POST', `/api/bots/${_sendBotId}/send`, { content, chatroom_id: STATE.chatroom_id });
-  toast('Bot mesajı gönderildi', 'success');
-  closeBotSendModal();
+  try {
+    const res = await api('POST', `/api/bots/${_sendBotId}/send`, { content, chatroom_id: STATE.chatroom_id });
+    if (res && res.success === false) {
+      toast(res.error || 'Bot mesajı gönderilemedi', 'error');
+      return;
+    }
+    toast('Bot mesajı gönderildi 🤖', 'success');
+    closeBotSendModal();
+  } catch (err) {
+    toast(err.message || 'Bot mesajı gönderilemedi', 'error');
+  }
 }
 
 // ── AI Tokens ──────────────────────────────
@@ -831,26 +869,46 @@ async function loadKickAccounts() {
 
 function renderKickAccounts() {
   const list = document.getElementById('kick-accounts-list');
-  if (!list) return;
-  if (!STATE.kickAccounts.length) {
-    list.innerHTML = '<p class="text-muted text-sm">Henüz Kick hesabı eklenmemiş.</p>';
-    return;
+  if (list) {
+    if (!STATE.kickAccounts.length) {
+      list.innerHTML = '<p class="text-muted text-sm">Henüz Kick hesabı eklenmemiş.</p>';
+    } else {
+      list.innerHTML = STATE.kickAccounts.map(a => `
+        <div class="kick-account-card">
+          <div>
+            <div class="fw-600">${esc(a.username || `Hesap #${a.id}`)}</div>
+            <div class="mono text-xs text-dim">${esc(a.token_masked)}</div>
+          </div>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="testKickAccount(${a.id}, this)">🧪 Test</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteKickAccount(${a.id})">🗑 Sil</button>
+          </div>
+        </div>
+      `).join('');
+    }
   }
-  list.innerHTML = STATE.kickAccounts.map(a => `
-    <div class="kick-account-card">
-      <div>
-        <div class="fw-600">${esc(a.username || `Hesap #${a.id}`)}</div>
-        <div class="mono text-xs text-dim">${esc(a.token_masked)}</div>
-      </div>
-      <button class="btn btn-danger btn-sm" onclick="deleteKickAccount(${a.id})">🗑 Sil</button>
-    </div>
-  `).join('');
 
   // Update manual send selector
   const sel = document.getElementById('manual-account-select');
   if (sel) {
-    sel.innerHTML = '<option value="">— Hesap seç —</option>' +
-      STATE.kickAccounts.map(a => `<option value="${a.id}">${esc(a.username || `Hesap #${a.id}`)}</option>`).join('');
+    const curVal = sel.value;
+    sel.innerHTML = '<option value="auto">⚡ Otomatik (Aktif Hesap)</option>' +
+      STATE.kickAccounts.slice(0, 100).map(a => `<option value="${a.id}">${esc(a.username || `Hesap #${a.id}`)}</option>`).join('');
+    if (curVal) sel.value = curVal;
+  }
+}
+
+async function testKickAccount(id, btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await api('POST', `/api/kick-accounts/${id}/test`);
+    toast(r.valid ? `✅ ${r.message}` : `❌ ${r.message}`, r.valid ? 'success' : 'error');
+  } catch (err) {
+    toast(`❌ Hata: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '🧪 Test';
   }
 }
 
@@ -1484,6 +1542,21 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 3. Güncel hali tarayıcıya yedekle
     await syncCloudBackup();
+
+    // 4. Kanal ve bağlantı durumunu kontrol et
+    try {
+      const chStatus = await api('GET', '/api/channel/status');
+      if (chStatus) {
+        if (chStatus.channel) {
+          STATE.channel = chStatus.channel;
+          const chInput = document.getElementById('channel-input') || document.getElementById('kick-setup-input');
+          if (chInput) chInput.value = chStatus.channel;
+        }
+        if (chStatus.chatroom_id) STATE.chatroom_id = chStatus.chatroom_id;
+        STATE.connected = Boolean(chStatus.connected);
+        updateConnectionUI();
+      }
+    } catch {}
   } catch (e) {
     console.error('Init load error:', e);
   }

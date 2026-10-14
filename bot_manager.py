@@ -86,20 +86,52 @@ class BotManager:
     # Sending
     # ──────────────────────────────────────────
 
+    def _get_fallback_account(self, exclude_id=None):
+        """Finds the best available Kick account that has a Sanctum token."""
+        try:
+            accounts = storage.get_kick_accounts()
+            for acc in accounts:
+                aid = acc['id']
+                if exclude_id and aid == exclude_id:
+                    continue
+                raw = storage.get_kick_token_raw(aid)
+                if raw and not raw.startswith('eyJ') and '|' in raw:
+                    return aid, raw
+        except Exception as e:
+            logger.warning(f'_get_fallback_account error: {e}')
+        return None, None
+
     def send_message(self, bot: dict, chatroom_id, content: str):
         """
         Send a message from a bot character to Kick chat.
         Returns (success: bool, detail: str)
         """
         kick_account_id = bot.get('kick_account_id')
-        if not kick_account_id:
-            return False, 'Bot için Kick hesabı atanmamış'
+        token = storage.get_kick_token_raw(kick_account_id) if kick_account_id else None
 
-        token = storage.get_kick_token_raw(kick_account_id)
+        # If token is missing or a web cookie, auto-select a fallback account
+        if not token or token.startswith('eyJ'):
+            fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
+            if fb_token:
+                logger.info(f"Bot {bot.get('name')} using fallback Kick account #{fb_id}")
+                kick_account_id = fb_id
+                token = fb_token
+
         if not token:
-            return False, 'Kick token bulunamadı'
+            return False, 'Bot için geçerli bir Kick Bearer token bulunamadı'
 
         success, resp = send_kick_message(chatroom_id, content, token)
+
+        # If 401 unauthenticated, try a backup account
+        if not success and 'User is not authenticated' in str(resp):
+            logger.warning(f"Kick account #{kick_account_id} expired/unauthenticated, trying backup...")
+            fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
+            if fb_token:
+                alt_ok, alt_resp = send_kick_message(chatroom_id, content, fb_token)
+                if alt_ok:
+                    success, resp = alt_ok, alt_resp
+                    kick_account_id = fb_id
+                    logger.info(f"Backup Kick account #{fb_id} successfully sent message")
 
         if success:
             delay = random.randint(
@@ -116,7 +148,27 @@ class BotManager:
 
     def send_manual_message(self, kick_account_id: int, chatroom_id, content: str):
         """Send a message from any Kick account (manual override)."""
-        token = storage.get_kick_token_raw(kick_account_id)
+        token = None
+        if not kick_account_id or kick_account_id == 0:
+            kick_account_id, token = self._get_fallback_account()
+        else:
+            token = storage.get_kick_token_raw(kick_account_id)
+            if token and token.startswith('eyJ'):
+                return False, 'Bu hesapta Bearer token yerine web session cookie var. Lütfen geçerli bir Bearer token ekleyin.'
+
         if not token:
-            return False, 'Kick token bulunamadı'
-        return send_kick_message(chatroom_id, content, token)
+            # Fallback to any valid account
+            kick_account_id, token = self._get_fallback_account()
+
+        if not token:
+            return False, 'Sistemde kayıtlı geçerli bir Kick Bearer token bulunamadı'
+
+        success, resp = send_kick_message(chatroom_id, content, token)
+        
+        # If auto mode and failed, try another fallback
+        if not success and (not kick_account_id or kick_account_id == 0) and 'User is not authenticated' in str(resp):
+            fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
+            if fb_token:
+                success, resp = send_kick_message(chatroom_id, content, fb_token)
+
+        return success, resp

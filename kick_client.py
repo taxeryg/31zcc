@@ -233,8 +233,17 @@ class KickChatClient:
                 self._reconnect_delay = 2
                 self._status('connected', f'Abone Olundu ✓  {self.channel} (#{self.chatroom_id})')
 
-            elif event in ("App\\Events\\ChatMessageEvent", "App\\Events\\ChatMessageSent"):
-                msg_data = json.loads(data.get('data', '{}'))
+            elif 'ChatMessageEvent' in event or 'ChatMessageSent' in event:
+                raw_d = data.get('data', '{}')
+                if isinstance(raw_d, str):
+                    try:
+                        msg_data = json.loads(raw_d)
+                    except Exception:
+                        msg_data = {}
+                elif isinstance(raw_d, dict):
+                    msg_data = raw_d
+                else:
+                    msg_data = {}
                 self._handle_chat(msg_data)
 
             elif event == 'pusher:ping':

@@ -7,6 +7,8 @@ import os
 import sys
 import time
 
+import threading
+
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 if hasattr(sys.stderr, 'reconfigure'):
@@ -45,7 +47,6 @@ socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 # ── Global state ─────────────────────────────
 _kick_client: kc.KickChatClient | None = None
 _bot_manager = BotManager()
-_pipeline: MessagePipeline | None = None
 _account_creator: kac.KickAccountCreatorSession | None = None
 
 
@@ -72,11 +73,44 @@ def _on_kick_status(status: str, message: str):
         storage.log_message('system', 'system', message, status=status)
 
 
+_pipeline: MessagePipeline = MessagePipeline(_bot_manager, _emit)
+_saved_cid = storage.get_setting('chatroom_id')
+if _saved_cid:
+    try:
+        _pipeline.set_chatroom_id(int(_saved_cid))
+    except Exception:
+        pass
+
+
 def _get_or_create_pipeline() -> MessagePipeline:
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = MessagePipeline(_bot_manager, _emit)
     return _pipeline
+
+
+def _auto_connect_saved():
+    time.sleep(2.0)
+    global _kick_client
+    ch = storage.get_setting('channel')
+    if ch:
+        try:
+            logger.info(f"Auto-connecting to saved Kick channel: {ch}")
+            _kick_client = kc.KickChatClient(
+                on_message_cb=_on_kick_message,
+                on_status_cb=_on_kick_status,
+            )
+            pipeline = _get_or_create_pipeline()
+            success = _kick_client.connect(ch)
+            if success:
+                for _ in range(12):
+                    if _kick_client.chatroom_id:
+                        break
+                    time.sleep(0.3)
+                if _kick_client.chatroom_id:
+                    pipeline.set_chatroom_id(_kick_client.chatroom_id)
+                    logger.info(f"Auto-connected successfully to {ch} (#{_kick_client.chatroom_id})")
+        except Exception as e:
+            logger.warning(f"Auto-connect on startup failed: {e}")
+
+threading.Thread(target=_auto_connect_saved, daemon=True, name='kick-autoconnect').start()
 
 
 # ═══════════════════════════════════════════════
@@ -247,13 +281,19 @@ def disconnect_channel():
 
 @app.route('/api/channel/status')
 def channel_status():
+    saved_ch = storage.get_setting('channel')
+    saved_cid = storage.get_setting('chatroom_id')
+    cid_val = None
+    if saved_cid and saved_cid.isdigit():
+        cid_val = int(saved_cid)
+
     if _kick_client:
         return jsonify({
             'connected': _kick_client.connected,
-            'channel': _kick_client.channel,
-            'chatroom_id': _kick_client.chatroom_id,
+            'channel': _kick_client.channel or saved_ch,
+            'chatroom_id': _kick_client.chatroom_id or cid_val,
         })
-    return jsonify({'connected': False, 'channel': None, 'chatroom_id': None})
+    return jsonify({'connected': False, 'channel': saved_ch, 'chatroom_id': cid_val})
 
 
 # ── Rol Kontrolü ─────────────────────────────────
@@ -337,8 +377,25 @@ def add_kick_account():
     token = (data.get('token') or '').strip()
     if not token:
         return jsonify({'error': 'Token gerekli'}), 400
-    id_ = storage.add_kick_account(username, token)
-    return jsonify({'success': True, 'id': id_})
+
+    clean_tok = token.replace('Bearer ', '').strip()
+    if not username:
+        import requests as _req
+        try:
+            r = _req.get(
+                'https://kick.com/api/v1/user',
+                headers={'Authorization': f'Bearer {clean_tok}', 'User-Agent': kc._HEADERS['User-Agent']},
+                timeout=5
+            )
+            if r.status_code == 200:
+                username = r.json().get('username') or ''
+        except Exception:
+            pass
+    if not username:
+        username = f"Hesap_{clean_tok[:8]}"
+
+    id_ = storage.add_kick_account(username, clean_tok)
+    return jsonify({'success': True, 'id': id_, 'username': username})
 
 
 @app.route('/api/kick-accounts/fetch-username', methods=['POST'])
@@ -478,27 +535,64 @@ def get_kick_raw_token(account_id):
     return jsonify({'token': raw})
 
 
+@app.route('/api/kick-accounts/<int:account_id>/test', methods=['POST'])
+def test_kick_account_route(account_id):
+    raw = storage.get_kick_token_raw(account_id)
+    if not raw:
+        return jsonify({'valid': False, 'message': 'Token bulunamadı'}), 404
+    if raw.startswith('eyJ'):
+        return jsonify({'valid': False, 'message': 'Geçersiz: Bearer token yerine web session cookie var'})
+
+    clean_tok = raw.replace('Bearer ', '').strip()
+    import requests as _req
+    try:
+        r = _req.get(
+            'https://kick.com/api/v1/user',
+            headers={'Authorization': f'Bearer {clean_tok}', 'User-Agent': kc._HEADERS['User-Agent']},
+            timeout=6
+        )
+        if r.status_code == 200:
+            u = r.json().get('username')
+            if u:
+                return jsonify({'valid': True, 'message': f'Geçerli! (@{u})', 'username': u})
+        return jsonify({'valid': False, 'message': f'Yetkilendirme başarısız (HTTP {r.status_code})'})
+    except Exception as e:
+        return jsonify({'valid': False, 'message': str(e)[:100]})
+
+
 @app.route('/api/kick-accounts/<int:account_id>/send', methods=['POST'])
 def manual_send(account_id):
     data = request.get_json() or {}
     content = (data.get('content') or '').strip()
-    chatroom_id = data.get('chatroom_id') or (
-        _kick_client.chatroom_id if _kick_client else None
+    c_id_setting = storage.get_setting('chatroom_id')
+    chatroom_id = (
+        data.get('chatroom_id')
+        or (_kick_client.chatroom_id if _kick_client else None)
+        or (int(c_id_setting) if c_id_setting and c_id_setting.isdigit() else None)
     )
     if not content:
-        return jsonify({'error': 'Mesaj gerekli'}), 400
+        return jsonify({'error': 'Mesaj gerekli', 'success': False}), 400
     if not chatroom_id:
-        return jsonify({'error': 'Chatroom ID bulunamadı — önce kanala bağlanın'}), 400
+        return jsonify({'error': 'Chatroom ID bulunamadı — önce kanala bağlanın', 'success': False}), 400
 
     success, resp = _bot_manager.send_manual_message(account_id, chatroom_id, content)
     if success:
         socketio.emit('chat_message', {
-            'username': f'[Manuel #{account_id}]',
+            'username': f'[Manuel #{account_id or "Auto"}]',
             'content': content,
             'type': 'manual',
             'msg_type': 'manual',
         })
-    return jsonify({'success': success, 'response': resp[:200]})
+        return jsonify({'success': True, 'response': resp[:200]})
+    else:
+        err_msg = 'Kick Mesaj Hatası: '
+        if 'User is not authenticated' in str(resp):
+            err_msg = 'Yetkilendirme Hatası: Bu hesabın tokeni geçersiz veya süresi dolmuş.'
+        elif resp:
+            err_msg += resp[:200]
+        else:
+            err_msg += 'Mesaj gönderilemedi'
+        return jsonify({'error': err_msg, 'success': False, 'response': resp[:200] if resp else ''}), 400
 
 
 @app.route('/api/bots/reset-daily', methods=['POST'])
@@ -558,29 +652,42 @@ def bot_manual_send(bot_id):
     """Manually send a message from a specific bot character."""
     data = request.get_json() or {}
     content = (data.get('content') or '').strip()
-    chatroom_id = data.get('chatroom_id') or (
-        _kick_client.chatroom_id if _kick_client else None
+    c_id_setting = storage.get_setting('chatroom_id')
+    chatroom_id = (
+        data.get('chatroom_id')
+        or (_kick_client.chatroom_id if _kick_client else None)
+        or (int(c_id_setting) if c_id_setting and c_id_setting.isdigit() else None)
     )
     if not content:
-        return jsonify({'error': 'Mesaj gerekli'}), 400
+        return jsonify({'error': 'Mesaj gerekli', 'success': False}), 400
     if not chatroom_id:
-        return jsonify({'error': 'Chatroom ID bulunamadı'}), 400
+        return jsonify({'error': 'Chatroom ID bulunamadı — önce kanala bağlanın', 'success': False}), 400
 
     bots = storage.get_bots()
     bot = next((b for b in bots if b['id'] == bot_id), None)
     if not bot:
-        return jsonify({'error': 'Bot bulunamadı'}), 404
+        return jsonify({'error': 'Bot bulunamadı', 'success': False}), 404
 
     success, resp = _bot_manager.send_message(bot, chatroom_id, content)
-    if success and _pipeline:
-        socketio.emit('chat_message', {
-            'username': bot['name'],
-            'content': content,
-            'type': 'bot',
-            'bot_name': bot['name'],
-            'msg_type': 'bot',
-        })
-    return jsonify({'success': success, 'response': resp[:200]})
+    if success:
+        if _pipeline:
+            socketio.emit('chat_message', {
+                'username': bot['name'],
+                'content': content,
+                'type': 'bot',
+                'bot_name': bot['name'],
+                'msg_type': 'bot',
+            })
+        return jsonify({'success': True, 'response': resp[:200]})
+    else:
+        err_msg = 'Bot Gönderim Hatası: '
+        if 'User is not authenticated' in str(resp):
+            err_msg = f'Yetkilendirme Hatası: {bot["name"]} botunun Kick hesabı geçersiz veya süresi dolmuş.'
+        elif resp:
+            err_msg += resp[:200]
+        else:
+            err_msg += 'Gönderilemedi'
+        return jsonify({'error': err_msg, 'success': False, 'response': resp[:200] if resp else ''}), 400
 
 
 # ── Kick Emotes ──────────────────────────────
