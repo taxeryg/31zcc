@@ -798,14 +798,14 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''SELECT id, key_code, duration_hours, created_at, activated_at, expires_at, bound_ip, bound_hwid, is_active
-                 FROM license_keys WHERE key_code=?''', (key_code,))
+                 FROM license_keys WHERE UPPER(TRIM(key_code))=UPPER(?)''', (key_code,))
     row = c.fetchone()
 
     if not row:
         conn.close()
         return False, 'Geçersiz Lisans Anahtarı!'
 
-    kid, _, duration_hours, _, activated_at, expires_at, bound_ip, bound_hwid, is_active = row
+    kid, real_key_code, duration_hours, _, activated_at, expires_at, bound_ip, bound_hwid, is_active = row
 
     if not is_active:
         conn.close()
@@ -826,7 +826,15 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
         return True, f'Key aktive edildi! Süre: {duration_hours} saat (Bitiş: {exp_str})'
 
     # Check IP Binding (Security Guard)
-    if bound_ip and bound_ip != client_ip:
+    def _norm_ip(ip):
+        if not ip:
+            return ''
+        ip = str(ip).strip()
+        if ip in ('127.0.0.1', '::1', 'localhost'):
+            return '127.0.0.1'
+        return ip
+
+    if bound_ip and _norm_ip(bound_ip) != _norm_ip(client_ip):
         conn.close()
         return False, f'IP Uyuşmazlığı! Bu key başka bir IP adresine kilitlenmiş ({bound_ip}).'
 
