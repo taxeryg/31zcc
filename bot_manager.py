@@ -90,10 +90,11 @@ class BotManager:
         """Finds the best available Kick account that has a Sanctum token."""
         try:
             accounts = storage.get_kick_accounts()
-            for acc in accounts:
+            # Shuffle accounts for dynamic pool distribution
+            cand_accounts = [a for a in accounts if a.get('id') != exclude_id]
+            random.shuffle(cand_accounts)
+            for acc in cand_accounts:
                 aid = acc['id']
-                if exclude_id and aid == exclude_id:
-                    continue
                 raw = storage.get_kick_token_raw(aid)
                 if raw and not raw.startswith('eyJ') and '|' in raw:
                     return aid, raw
@@ -101,19 +102,33 @@ class BotManager:
             logger.warning(f'_get_fallback_account error: {e}')
         return None, None
 
+    def get_pool_account(self):
+        """Randomly pick an active account from pool for anonymous/broadcast chatting."""
+        aid, raw = self._get_fallback_account()
+        if aid:
+            acc = next((a for a in storage.get_kick_accounts() if a['id'] == aid), None)
+            uname = acc.get('username') if acc else f'Account_{aid}'
+            return {
+                'id': 9999,
+                'name': uname,
+                'kick_account_id': aid,
+                'min_delay': 2,
+                'max_delay': 5,
+            }
+        return {'id': 1, 'name': 'KickBot', 'kick_account_id': None}
+
     def send_message(self, bot: dict, chatroom_id, content: str):
         """
-        Send a message from a bot character to Kick chat.
+        Send a message from a bot character to Kick chat with account pool rotation.
         Returns (success: bool, detail: str)
         """
         kick_account_id = bot.get('kick_account_id')
         token = storage.get_kick_token_raw(kick_account_id) if kick_account_id else None
 
-        # If token is missing or a web cookie, auto-select a fallback account
+        # Auto-pool rotation: If configured or token invalid, grab from pool
         if not token or token.startswith('eyJ'):
             fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
             if fb_token:
-                logger.info(f"Bot {bot.get('name')} using fallback Kick account #{fb_id}")
                 kick_account_id = fb_id
                 token = fb_token
 
@@ -122,21 +137,22 @@ class BotManager:
 
         success, resp = send_kick_message(chatroom_id, content, token)
 
-        # If 401 unauthenticated, try a backup account
+        # If 401 unauthenticated, try a backup account from pool
         if not success and 'User is not authenticated' in str(resp):
-            logger.warning(f"Kick account #{kick_account_id} expired/unauthenticated, trying backup...")
-            fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
-            if fb_token:
-                alt_ok, alt_resp = send_kick_message(chatroom_id, content, fb_token)
-                if alt_ok:
-                    success, resp = alt_ok, alt_resp
-                    kick_account_id = fb_id
-                    logger.info(f"Backup Kick account #{fb_id} successfully sent message")
+            logger.warning(f"Kick account #{kick_account_id} expired/unauthenticated, trying backup pool...")
+            for _ in range(3):
+                fb_id, fb_token = self._get_fallback_account(exclude_id=kick_account_id)
+                if fb_token:
+                    alt_ok, alt_resp = send_kick_message(chatroom_id, content, fb_token)
+                    if alt_ok:
+                        success, resp = alt_ok, alt_resp
+                        kick_account_id = fb_id
+                        break
 
         if success:
             delay = random.randint(
-                bot.get('min_delay', 8),
-                bot.get('max_delay', 45)
+                bot.get('min_delay', 6),
+                bot.get('max_delay', 35)
             )
             self._set_cooldown(bot['id'], delay)
             self._increment_daily(bot['id'])
@@ -145,6 +161,33 @@ class BotManager:
             logger.warning(f'[{bot["name"]}] send failed: {resp[:80]}')
 
         return success, resp
+
+    def trigger_hype(self, chatroom_id: int, count: int = 10, custom_content: str = None) -> list:
+        """
+        Send rapid hype emotes or text using separate accounts from the pool.
+        """
+        emotes = storage.get_emotes()
+        results = []
+        accounts = storage.get_kick_accounts()
+        random.shuffle(accounts)
+
+        sent = 0
+        for acc in accounts:
+            if sent >= count:
+                break
+            aid = acc['id']
+            token = storage.get_kick_token_raw(aid)
+            if not token or token.startswith('eyJ') or '|' not in token:
+                continue
+
+            content = custom_content if custom_content else random.choice(emotes)
+            ok, resp = send_kick_message(chatroom_id, content, token)
+            results.append({'account_id': aid, 'username': acc['username'], 'content': content, 'success': ok})
+            if ok:
+                sent += 1
+            time.sleep(random.uniform(0.3, 0.8))
+
+        return results
 
     def send_manual_message(self, kick_account_id: int, chatroom_id, content: str):
         """Send a message from any Kick account (manual override)."""

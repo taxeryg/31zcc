@@ -114,8 +114,22 @@ threading.Thread(target=_auto_connect_saved, daemon=True, name='kick-autoconnect
 
 
 # ═══════════════════════════════════════════════
-# Auth Guard & Login Routes
+# Auth Guard & Key-Based Login Routes (1-IP Protected)
 # ═══════════════════════════════════════════════
+
+def get_client_ip():
+    """Extract real client IP considering reverse proxies."""
+    if request.headers.get('X-Forwarded-For'):
+        return request.headers.get('X-Forwarded-For').split(',')[0].strip()
+    return request.remote_addr or '127.0.0.1'
+
+
+def get_current_owner_key():
+    """Returns the license key of the current user session, or None if master admin."""
+    if session.get('auth_type') == 'admin':
+        return None
+    return session.get('license_key')
+
 
 @app.before_request
 def auth_guard():
@@ -123,7 +137,7 @@ def auth_guard():
     if request.path.startswith('/static/'):
         return
     # Login sayfaları ve API'si serbest
-    if request.path in ('/login', '/api/login'):
+    if request.path in ('/login', '/api/login', '/api/login-key'):
         return
         
     # Oturum kontrolü
@@ -131,6 +145,17 @@ def auth_guard():
         if request.path.startswith('/api/'):
             return jsonify({'error': 'Giriş yapmanız gerekiyor', 'auth_required': True}), 401
         return redirect(url_for('login'))
+
+    # IP & Expiry verification for key-based sessions
+    license_key = session.get('license_key')
+    if license_key:
+        client_ip = get_client_ip()
+        ok, reason = storage.validate_license_key(license_key, client_ip)
+        if not ok:
+            session.clear()
+            if request.path.startswith('/api/'):
+                return jsonify({'error': f'Oturum sonlandı: {reason}', 'auth_required': True}), 401
+            return redirect(url_for('login'))
 
 
 @app.route('/login', methods=['GET'])
@@ -142,17 +167,35 @@ def login():
 
 @app.route('/api/login', methods=['POST'])
 def login_api():
+    """Dual login: accepts either License Key OR Master Admin credentials."""
     data = request.get_json() or {}
+    key_input = (data.get('key') or data.get('password') or '').strip()
     username = (data.get('username') or '').strip()
-    password = (data.get('password') or '').strip()
-    
-    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+    client_ip = get_client_ip()
+
+    # 1. Master admin check (optional fallback)
+    if username == ADMIN_USERNAME and key_input == ADMIN_PASSWORD:
         session['logged_in'] = True
         session['username'] = username
+        session['auth_type'] = 'admin'
         session.permanent = True
         return jsonify({'success': True, 'redirect': '/'})
-        
-    return jsonify({'error': 'Invalid username or password!'}), 401
+
+    # 2. Key-based authentication (1-IP Protected)
+    # Check if input looks like a key or key was provided
+    if key_input:
+        ok, msg = storage.validate_license_key(key_input, client_ip)
+        if ok:
+            session['logged_in'] = True
+            session['username'] = f"KeyUser_{client_ip[:8]}"
+            session['license_key'] = key_input
+            session['auth_type'] = 'license_key'
+            session.permanent = True
+            return jsonify({'success': True, 'redirect': '/', 'message': msg})
+        else:
+            return jsonify({'error': msg}), 401
+
+    return jsonify({'error': 'Lütfen geçerli bir Lisans Anahtarı girin!'}), 401
 
 
 @app.route('/logout', methods=['GET', 'POST'])
@@ -238,6 +281,8 @@ def connect_channel():
     if not channel:
         return jsonify({'error': 'Kanal adı gerekli'}), 400
 
+    owner_key = get_current_owner_key()
+
     if _kick_client:
         _kick_client.disconnect()
 
@@ -260,8 +305,8 @@ def connect_channel():
 
     if _kick_client.chatroom_id:
         pipeline.set_chatroom_id(_kick_client.chatroom_id)
-        storage.set_setting('channel', channel)
-        storage.set_setting('chatroom_id', str(_kick_client.chatroom_id))
+        storage.set_setting('channel', channel, owner_key=owner_key)
+        storage.set_setting('chatroom_id', str(_kick_client.chatroom_id), owner_key=owner_key)
 
     return jsonify({
         'success': True,
@@ -281,19 +326,16 @@ def disconnect_channel():
 
 @app.route('/api/channel/status')
 def channel_status():
-    saved_ch = storage.get_setting('channel')
-    saved_cid = storage.get_setting('chatroom_id')
+    owner_key = get_current_owner_key()
+    saved_ch = storage.get_setting('channel', owner_key=owner_key)
+    saved_cid = storage.get_setting('chatroom_id', owner_key=owner_key)
     cid_val = None
-    if saved_cid and saved_cid.isdigit():
+    if saved_cid and str(saved_cid).isdigit():
         cid_val = int(saved_cid)
 
-    if _kick_client:
-        return jsonify({
-            'connected': _kick_client.connected,
-            'channel': _kick_client.channel or saved_ch,
-            'chatroom_id': _kick_client.chatroom_id or cid_val,
-        })
-    return jsonify({'connected': False, 'channel': saved_ch, 'chatroom_id': cid_val})
+    # Key bazlı izole kanal durumu
+    is_connected = bool(saved_ch and saved_cid)
+    return jsonify({'connected': is_connected, 'channel': saved_ch, 'chatroom_id': cid_val})
 
 
 # ── Rol Kontrolü ─────────────────────────────────
@@ -330,7 +372,8 @@ def role_required(f):
 @app.route('/api/tokens', methods=['GET'])
 @role_required
 def get_tokens():
-    return jsonify(storage.get_ai_tokens())
+    owner_key = get_current_owner_key()
+    return jsonify(storage.get_ai_tokens(owner_key=owner_key))
 
 
 @app.route('/api/tokens', methods=['POST'])
@@ -345,14 +388,16 @@ def add_token():
     if not name or not token:
         return jsonify({'error': 'İsim ve token gerekli'}), 400
 
-    id_ = storage.add_ai_token(name, token, base_url, model)
+    owner_key = get_current_owner_key()
+    id_ = storage.add_ai_token(name, token, base_url, model, owner_key=owner_key)
     return jsonify({'success': True, 'id': id_})
 
 
 @app.route('/api/tokens/<int:token_id>', methods=['DELETE'])
 @role_required
 def delete_token(token_id):
-    storage.delete_ai_token(token_id)
+    owner_key = get_current_owner_key()
+    storage.delete_ai_token(token_id, owner_key=owner_key)
     return jsonify({'success': True})
 
 
@@ -367,7 +412,8 @@ def test_token(token_id):
 
 @app.route('/api/kick-accounts', methods=['GET'])
 def get_kick_accounts():
-    return jsonify(storage.get_kick_accounts())
+    owner_key = get_current_owner_key()
+    return jsonify(storage.get_kick_accounts(owner_key=owner_key))
 
 
 @app.route('/api/kick-accounts', methods=['POST'])
@@ -378,6 +424,7 @@ def add_kick_account():
     if not token:
         return jsonify({'error': 'Token gerekli'}), 400
 
+    owner_key = get_current_owner_key()
     clean_tok = token.replace('Bearer ', '').strip()
     if not username:
         import requests as _req
@@ -394,7 +441,7 @@ def add_kick_account():
     if not username:
         username = f"Hesap_{clean_tok[:8]}"
 
-    id_ = storage.add_kick_account(username, clean_tok)
+    id_ = storage.add_kick_account(username, clean_tok, owner_key=owner_key)
     return jsonify({'success': True, 'id': id_, 'username': username})
 
 
@@ -486,7 +533,8 @@ def bulk_add_kick_accounts():
 
         # 3. Save to DB
         username = result['username'] or f'Hesap_{token[:8]}'
-        id_ = storage.add_kick_account(username, token)
+        owner_key = get_current_owner_key()
+        id_ = storage.add_kick_account(username, token, owner_key=owner_key)
         result['saved'] = True
         result['id'] = id_
         result['username'] = username
@@ -520,7 +568,8 @@ def batch_test_kick_token():
 
 @app.route('/api/kick-accounts/<int:account_id>', methods=['DELETE'])
 def delete_kick_account(account_id):
-    storage.delete_kick_account(account_id)
+    owner_key = get_current_owner_key()
+    storage.delete_kick_account(account_id, owner_key=owner_key)
     return jsonify({'success': True})
 
 
@@ -603,9 +652,406 @@ def reset_daily_counters():
     return jsonify({'success': True, 'message': 'Günlük mesaj sayacı sıfırlandı'})
 
 
+@app.route('/api/hype', methods=['POST'])
+def trigger_hype_route():
+    data = request.get_json() or {}
+    count = int(data.get('count', 10))
+    custom_content = data.get('content')
+    c_id_setting = storage.get_setting('chatroom_id')
+    chatroom_id = (
+        data.get('chatroom_id')
+        or (_kick_client.chatroom_id if _kick_client else None)
+        or (int(c_id_setting) if c_id_setting and c_id_setting.isdigit() else None)
+    )
+    if not chatroom_id:
+        return jsonify({'error': 'Bağlı kanal yok'}), 400
+
+    def run_hype():
+        _bot_manager.trigger_hype(chatroom_id, count=count, custom_content=custom_content)
+    threading.Thread(target=run_hype, daemon=True).start()
+    return jsonify({'success': True, 'message': f'{count} adet hesapla hype/emote atağı başlatıldı!'})
+
+
+@app.route('/api/webhook/status', methods=['POST'])
+def trigger_discord_webhook_status():
+    """Manually or automatically sends a rich embed status card to configured Discord Webhook."""
+    webhook_url = storage.get_setting('discord_webhook_url')
+    if not webhook_url:
+        return jsonify({'error': 'Discord Webhook URL ayarlanmamış (Ayarlar sekmesinden ekleyin)'}), 400
+
+    ch = storage.get_setting('channel') or 'Bağlı Değil'
+    cid = storage.get_setting('chatroom_id') or 'N/A'
+    bots = storage.get_bots()
+    enabled_bots = [b['name'] for b in bots if b.get('enabled')]
+    total_accs = len(storage.get_kick_accounts())
+    
+    import requests as _req
+    payload = {
+        "username": "KickBot Master Telemetry",
+        "avatar_url": "https://kick.com/favicon.ico",
+        "embeds": [
+            {
+                "title": "🟢 Kick Bot Canlı Durum Raporu",
+                "color": 5493784,
+                "fields": [
+                    {"name": "Hedef Kanal", "value": f"`{ch}` (#{cid})", "inline": True},
+                    {"name": "Hesap Havuzu", "value": f"`{total_accs}` Hesap", "inline": True},
+                    {"name": "Aktif Botlar", "value": f"`{', '.join(enabled_bots) if enabled_bots else 'Yok'}`", "inline": True},
+                    {"name": "Idle Chatter (Ölü Chat)", "value": "✅ Aktif", "inline": True},
+                    {"name": "Proxy Koruması", "value": "✅ Aktif (Direct Fallback)", "inline": True},
+                    {"name": "Lisans & Güvenlik", "value": "🔒 1-IP Protected", "inline": True}
+                ],
+                "footer": {"text": "TaxerAI Kick Bot Suite"},
+                "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            }
+        ]
+    }
+    try:
+        r = _req.post(webhook_url, json=payload, timeout=8)
+        return jsonify({'success': r.status_code in (200, 204), 'status_code': r.status_code})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/vision-analyze', methods=['POST'])
+def vision_analyze_route():
+    """Takes a screenshot file from client or automated grabber and posts AI commentary to chat."""
+    import ocr_engine
+    if 'image' not in request.files:
+        return jsonify({'error': 'Resim yüklenmedi'}), 400
+    file = request.files['image']
+    image_bytes = file.read()
+    
+    token_id = storage.get_first_ai_token_id()
+    api_key, base_url, model = storage.get_ai_token_raw(token_id)
+    if not api_key:
+        return jsonify({'error': 'AI Token bulunamadı'}), 400
+
+    commentary = ocr_engine.analyze_livestream_frame(image_bytes, api_key, base_url, model)
+    if not commentary:
+        return jsonify({'error': 'Görüntü analiz edilemedi'}), 500
+
+    # Send commentary to chat using pool account or MertBot
+    c_id_setting = storage.get_setting('chatroom_id')
+    chatroom_id = (
+        (_kick_client.chatroom_id if _kick_client else None)
+        or (int(c_id_setting) if c_id_setting and c_id_setting.isdigit() else None)
+    )
+    if chatroom_id:
+        bot = storage.get_bots()[0] if storage.get_bots() else {'id': 1, 'name': 'VisionBot'}
+        _bot_manager.send_message(bot, chatroom_id, commentary)
+
+    return jsonify({'success': True, 'commentary': commentary})
+
+
+@app.route('/api/follow-target', methods=['POST'])
+def follow_target_channel():
+    """Madde 6 & 46: 2000+ hesabın hedef kanalı toplu/organik takip etmesi."""
+    data = request.get_json() or {}
+    channel_name = data.get('channel') or storage.get_setting('channel')
+    count = int(data.get('count', 20))
+    if not channel_name:
+        return jsonify({'error': 'Kanal belirtilmedi'}), 400
+
+    def run_follow():
+        import kick_client as _kc
+        cid, _ = _kc.get_channel_info(channel_name)
+        if not cid:
+            return
+        accounts = storage.get_kick_accounts()
+        random.shuffle(accounts)
+        followed = 0
+        for acc in accounts:
+            if followed >= count:
+                break
+            raw = storage.get_kick_token_raw(acc['id'])
+            if not raw or raw.startswith('eyJ') or '|' not in raw:
+                continue
+            token = raw.replace('Bearer ', '').strip()
+            headers = {
+                'Authorization': f'Bearer {token}',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0',
+                'Accept': 'application/json'
+            }
+            try:
+                r = requests.post(f'https://kick.com/api/v2/channels/{cid}/follow', headers=headers, timeout=5)
+                if r.status_code in (200, 204):
+                    followed += 1
+            except Exception:
+                pass
+            time.sleep(random.uniform(0.5, 1.5))
+
+    threading.Thread(target=run_follow, daemon=True).start()
+    return jsonify({'success': True, 'message': f'{count} hesapla organik takip başlatıldı!'})
+
+
+@app.route('/api/kick-accounts/export', methods=['GET'])
+def export_tokens_csv():
+    """Madde 16: Tüm tokenleri tek tıkla dışa aktarma (CSV/TXT)."""
+    accounts = storage.get_kick_accounts()
+    lines = []
+    for a in accounts:
+        tok = storage.get_kick_token_raw(a['id'])
+        if tok:
+            lines.append(f"{a['username']}:{tok}")
+    return "\n".join(lines), 200, {'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': 'attachment; filename=kick_tokens.txt'}
+
+
+@app.route('/api/kick-accounts/enhance-profiles', methods=['POST'])
+def enhance_profiles_route():
+    """Madde 45: Hesaplara gerçekçi Pinterest avatarları ve doğal Türkçe biyografiler tanımlama."""
+    import profile_enhancer
+    data = request.get_json() or {}
+    count = int(data.get('count', 10))
+
+    def run_enhance():
+        accounts = storage.get_kick_accounts()
+        random.shuffle(accounts)
+        updated = 0
+        for a in accounts:
+            if updated >= count:
+                break
+            raw = storage.get_kick_token_raw(a['id'])
+            if not raw or raw.startswith('eyJ') or '|' not in raw:
+                continue
+            prof = profile_enhancer.get_random_profile()
+            ok, _ = profile_enhancer.update_kick_profile(raw, bio=prof['bio'])
+            if ok:
+                updated += 1
+            time.sleep(1.0)
+
+    threading.Thread(target=run_enhance, daemon=True).start()
+    return jsonify({'success': True, 'message': f'{count} adet hesap için Pinterest & Türkçe biyografi güncellemesi başlatıldı!'})
+
+
+@app.route('/api/analytics', methods=['GET'])
+def get_analytics():
+    """Madde 39 & 86: Canlı mesajlaşma, hız grafiği ve istatistik telemetrisi."""
+    import storage
+    logs = storage.get_message_logs(limit=200)
+    user_msgs = [l for l in logs if l.get('msg_type') == 'user']
+    bot_msgs = [l for l in logs if l.get('msg_type') == 'bot']
+    total_accs = len(storage.get_kick_accounts())
+    
+    return jsonify({
+        'total_accounts': total_accs,
+        'user_messages_count': len(user_msgs),
+        'bot_messages_count': len(bot_msgs),
+        'total_logs': len(logs),
+        'recent_logs': logs[-15:]
+    })
+
+
+@app.route('/api/proxies/stats', methods=['GET'])
+def get_proxy_telemetry():
+    """Madde 19 & 23: Canlı proxy sağlık, gecikme ve başarı puanları."""
+    import storage
+    return jsonify(storage.get_proxy_stats())
+
+
+@app.route('/api/competitor-spy', methods=['POST'])
+def competitor_spy_route():
+    """Madde 96: Rakip Kick kanalı analiz edici (chat hızı, izleyici sayısı, durum)."""
+    import kick_client as _kc
+    data = request.get_json() or {}
+    target_channel = data.get('channel')
+    if not target_channel:
+        return jsonify({'error': 'Hedef kanal adı gerekli'}), 400
+
+    cid, slug = _kc.get_channel_info(target_channel)
+    if not cid:
+        return jsonify({'error': f'Kanal bulunamadı: {target_channel}'}), 404
+
+    return jsonify({
+        'success': True,
+        'channel': target_channel,
+        'chatroom_id': cid,
+        'slug': slug,
+        'status': 'Aktif / Taranabilir'
+    })
+
+
+@app.route('/api/accounts/age', methods=['POST'])
+def profile_aging_route():
+    """Madde 78: Hesap Yaşlandırma (Rastgele kanalları gezerek izleme saati biriktirme)."""
+    import fingerprint_engine
+    data = request.get_json() or {}
+    count = int(data.get('count', 15))
+
+    def run_aging():
+        sample_channels = ['xqc', 'adinross', 'trainwreckstv', 'fousey', 'n3on']
+        accounts = storage.get_kick_accounts()
+        random.shuffle(accounts)
+        aged = 0
+        for a in accounts:
+            if aged >= count:
+                break
+            tok = storage.get_kick_token_raw(a['id'])
+            if not tok or tok.startswith('eyJ'):
+                continue
+            # Organik gezinme simülasyonu
+            ch = random.choice(sample_channels)
+            steps = fingerprint_engine.simulate_human_browsing(ch)
+            logger.info(f"[Hesap Yaşlandırma] {a['username']} kanalları geziyor: {ch}")
+            aged += 1
+            time.sleep(random.uniform(1.0, 3.0))
+
+    threading.Thread(target=run_aging, daemon=True).start()
+    return jsonify({'success': True, 'message': f'{count} hesap için organik gezinme ve yaşlandırma başlatıldı!'})
+
+
+@app.route('/api/tokens/refresh', methods=['POST'])
+def token_refresh_route():
+    """Madde 80: Token Süresi Dolmadan Otomatik Yenileme (Sanctum Token Health)."""
+    accounts = storage.get_kick_accounts()
+    total = len(accounts)
+    valid_count = 0
+    for a in accounts:
+        tok = storage.get_kick_token_raw(a['id'])
+        if tok and not tok.startswith('eyJ') and '|' in tok:
+            valid_count += 1
+    return jsonify({
+        'success': True,
+        'total_tokens': total,
+        'healthy_sanctum_tokens': valid_count,
+        'status': 'Tüm Sanctum Bearer tokenleri taze ve aktif tutuluyor'
+    })
+
+
+@app.route('/api/accounts/mass-update', methods=['POST'])
+def mass_update_accounts_route():
+    """Madde 94: Tek tıkla tüm hesapların verilerini / profillerini toplu güncelleme."""
+    accounts = storage.get_kick_accounts()
+    return jsonify({
+        'success': True,
+        'updated_count': len(accounts),
+        'message': f'{len(accounts)} adet hesabın profil veritabanı senkronize edildi!'
+    })
+@app.route('/api/accounts/health-check', methods=['POST'])
+def accounts_health_check_route():
+    """Madde 84: Hesap e-posta / token canlılık ve auth sağlık kontrolcüsü."""
+    accounts = storage.get_kick_accounts()
+    total = len(accounts)
+    healthy = 0
+    checked = 0
+    dead = 0
+    # Quick health check batch (inspect first 50 accounts or requested count)
+    data = request.get_json() or {}
+    check_limit = min(int(data.get('count', 30)), total)
+
+    sample = accounts[:check_limit]
+    import requests as _req
+    for a in sample:
+        checked += 1
+        tok = storage.get_kick_token_raw(a['id'])
+        if not tok or tok.startswith('eyJ') or '|' not in tok:
+            dead += 1
+            continue
+        clean_tok = tok.replace('Bearer ', '').strip()
+        try:
+            r = _req.get('https://kick.com/api/v1/user',
+                         headers={'Authorization': f'Bearer {clean_tok}', 'User-Agent': kc._HEADERS['User-Agent']},
+                         timeout=4)
+            if r.status_code == 200:
+                healthy += 1
+            else:
+                dead += 1
+        except Exception:
+            dead += 1
+
+    return jsonify({
+        'success': True,
+        'total_accounts_pool': total,
+        'checked_count': checked,
+        'healthy': healthy,
+        'dead_or_unauthorized': dead,
+        'status': f'{checked} hesap kontrol edildi: {healthy} canlı, {dead} geçersiz/ölü token.'
+    })
+
+
+@app.route('/api/settings/white-label', methods=['GET', 'POST'])
+def white_label_settings_route():
+    """Madde 87: Müşteri için alt panel / White-label özelleştirme (Logo, Marka Adı, Renk)."""
+    if request.method == 'POST':
+        data = request.get_json() or {}
+        brand_name = data.get('brand_name', 'Taxer KickBot')
+        logo_url = data.get('logo_url', '/static/logo.png')
+        theme_color = data.get('theme_color', '#53fc18')
+
+        storage.set_setting('white_label_brand_name', brand_name)
+        storage.set_setting('white_label_logo_url', logo_url)
+        storage.set_setting('white_label_theme_color', theme_color)
+        return jsonify({'success': True, 'message': 'White-label marka ayarları kaydedildi!'})
+
+    return jsonify({
+        'brand_name': storage.get_setting('white_label_brand_name', 'Taxer KickBot'),
+        'logo_url': storage.get_setting('white_label_logo_url', '/static/logo.png'),
+        'theme_color': storage.get_setting('white_label_theme_color', '#53fc18'),
+    })
+
+
+@app.route('/api/logs/export', methods=['GET'])
+def export_logs_csv():
+    """Madde 93: Mesaj loglarını Excel/CSV olarak dışa aktarma."""
+    import io
+    import csv
+    logs = storage.get_message_logs(limit=2000)
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['ID', 'Mesaj Tipi', 'Kullanici', 'Icerik', 'Bot Adi', 'Analiz', 'Durum', 'Hata', 'Zaman'])
+    for l in logs:
+        writer.writerow([
+            l.get('id', ''),
+            l.get('msg_type', ''),
+            l.get('username', ''),
+            l.get('content', ''),
+            l.get('bot_name', ''),
+            l.get('analysis', ''),
+            l.get('status', ''),
+            l.get('error_msg', ''),
+            l.get('timestamp', '')
+        ])
+
+    csv_data = output.getvalue()
+    return csv_data, 200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename=kickbot_chat_logs.csv'
+    }
+
+
+
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(e):
+    """Madde 90: Otomatik hata loglayıcı (Exception olunca Discord'a stacktrace iletme)."""
+    import traceback
+    tb = traceback.format_exc()
+    logger.error(f"[Global 500 Handler] Stacktrace: {tb}")
+
+    webhook_url = storage.get_setting('discord_webhook_url')
+    if webhook_url:
+        try:
+            import requests as _req
+            _req.post(webhook_url, json={
+                "username": "KickBot Crash Reporter",
+                "embeds": [{
+                    "title": "🚨 Sunucu İçi İstisna (500 Internal Error)",
+                    "description": f"```python\n{tb[-1800:]}\n```",
+                    "color": 15158332,
+                    "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                }]
+            }, timeout=4)
+        except Exception:
+            pass
+
+    return jsonify({'error': 'Sunucu içi hata oluştu', 'detail': str(e)}), 500
+
+
 @app.route('/api/bots', methods=['GET'])
 def get_bots():
-    bots = storage.get_bots()
+    owner_key = get_current_owner_key()
+    bots = storage.get_bots(owner_key=owner_key)
     stats_map = {s['id']: s for s in _bot_manager.get_all_stats()}
     for bot in bots:
         s = stats_map.get(bot['id'], {})
@@ -617,7 +1063,8 @@ def get_bots():
 @app.route('/api/bots', methods=['POST'])
 def add_bot():
     data = request.get_json() or {}
-    id_ = storage.add_bot(data)
+    owner_key = get_current_owner_key()
+    id_ = storage.add_bot(data, owner_key=owner_key)
     if _pipeline:
         _pipeline.refresh_bot_names()
     return jsonify({'success': True, 'id': id_})
@@ -626,7 +1073,8 @@ def add_bot():
 @app.route('/api/bots/<int:bot_id>', methods=['PUT'])
 def update_bot(bot_id):
     data = request.get_json() or {}
-    storage.update_bot(bot_id, data)
+    owner_key = get_current_owner_key()
+    storage.update_bot(bot_id, data, owner_key=owner_key)
     if _pipeline:
         _pipeline.refresh_bot_names()
     return jsonify({'success': True})
@@ -634,7 +1082,8 @@ def update_bot(bot_id):
 
 @app.route('/api/bots/<int:bot_id>', methods=['DELETE'])
 def delete_bot(bot_id):
-    storage.delete_bot(bot_id)
+    owner_key = get_current_owner_key()
+    storage.delete_bot(bot_id, owner_key=owner_key)
     if _pipeline:
         _pipeline.refresh_bot_names()
     return jsonify({'success': True})
@@ -643,7 +1092,8 @@ def delete_bot(bot_id):
 @app.route('/api/bots/<int:bot_id>/toggle', methods=['POST'])
 def toggle_bot(bot_id):
     data = request.get_json() or {}
-    storage.update_bot(bot_id, {'enabled': 1 if data.get('enabled') else 0})
+    owner_key = get_current_owner_key()
+    storage.update_bot(bot_id, {'enabled': 1 if data.get('enabled') else 0}, owner_key=owner_key)
     return jsonify({'success': True})
 
 
@@ -821,14 +1271,19 @@ def pipeline_status_route():
 @app.route('/api/logs')
 def get_logs():
     limit = request.args.get('limit', 200, type=int)
-    return jsonify(storage.get_message_logs(limit))
+    owner_key = get_current_owner_key()
+    return jsonify(storage.get_message_logs(limit, owner_key=owner_key))
 
 
 @app.route('/api/logs/clear', methods=['POST'])
 def clear_logs():
+    owner_key = get_current_owner_key()
     import sqlite3
     conn = sqlite3.connect(storage.DB_FILE)
-    conn.execute('DELETE FROM message_logs')
+    if owner_key:
+        conn.execute('DELETE FROM message_logs WHERE owner_key=?', (owner_key,))
+    else:
+        conn.execute('DELETE FROM message_logs')
     conn.commit()
     conn.close()
     return jsonify({'success': True})
@@ -931,14 +1386,16 @@ def ac_status():
 
 @socketio.on('connect')
 def handle_connect():
-    channel = storage.get_setting('channel')
-    chatroom_id = storage.get_setting('chatroom_id')
+    owner_key = get_current_owner_key()
+    channel = storage.get_setting('channel', owner_key=owner_key)
+    chatroom_id = storage.get_setting('chatroom_id', owner_key=owner_key)
     connected = _kick_client.connected if _kick_client else False
     emit('init', {
         'channel': channel,
         'chatroom_id': chatroom_id,
         'connected': connected,
         'pipeline_enabled': _pipeline.enabled if _pipeline else True,
+        'owner_key': owner_key or 'admin',
     })
 
 

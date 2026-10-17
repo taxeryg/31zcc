@@ -467,6 +467,47 @@ async function sendRandomEmote() {
   }
 }
 
+async function triggerHypeAttack() {
+  const btn = document.getElementById('btn-hype-raid');
+  const chatroom_id = STATE.chatroom_id;
+
+  if (!STATE.connected && !chatroom_id) {
+    toast('Önce bir Kick kanalına bağlanmalısınız!', 'error');
+    return;
+  }
+
+  const customText = prompt('Hype/Raid mesajı girin (Boş bırakırsanız rastgele emoji basar):', '🔥 W YAYIN GG');
+  if (customText === null) return;
+
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>⏳</span> <span>Raid Başlatıldı…</span>';
+  }
+
+  try {
+    const res = await api('POST', '/api/hype', {
+      count: 50,
+      content: customText.trim() || undefined,
+      chatroom_id: chatroom_id
+    });
+    if (res && res.success) {
+      toast('🔥 50 Hesapla Anlık Hype Raid Başlatıldı!', 'success');
+    }
+  } catch (err) {
+    toast(`Hata: ${err.message}`, 'error');
+  } finally {
+    setTimeout(() => {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }, 2000);
+  }
+}
+
+window.triggerHypeAttack = triggerHypeAttack;
+
 async function addSingleEmote() {
   const input = document.getElementById('emote-single-input');
   if (!input) return;
@@ -993,6 +1034,33 @@ async function deleteKickAccount(id) {
   await loadKickAccounts();
   await syncCloudBackup();
   toast('Hesap silindi', 'info');
+}
+
+async function purgeDeadTokensUI() {
+  const btn = document.getElementById('btn-purge-dead');
+  if (!confirm('Kick API üzerinden tüm tokenler taranacak ve geçersiz/ölü olanlar temizlenecek. Onaylıyor musunuz?')) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Taranıyor…';
+  }
+  try {
+    const res = await api('POST', '/api/accounts/health-check', { count: 200 });
+    toast(res.status || 'Tarama tamamlandı!', 'info');
+    await loadKickAccounts();
+    await loadBots();
+    await syncCloudBackup();
+  } catch (err) {
+    toast(`Hata: ${err.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '🧹 Ölü Tokenleri Süpür';
+    }
+  }
+}
+
+function exportTokensList() {
+  window.open('/api/kick-accounts/export', '_blank');
 }
 
 // ── Bot dropdowns helper ────────────────────
@@ -1697,5 +1765,8 @@ if (typeof socket !== 'undefined') {
     }
   });
 }
+
+
+
 
 

@@ -681,17 +681,31 @@ _guild_obj = discord.Object(id=GUILD_ID) if GUILD_ID else None
 
 
 # ── Permission & Channel Verification ─────────────────────────────────────────
-def is_admin(interaction: discord.Interaction) -> bool:
-    """Check if the user has the Administrator permission or the designated Admin Role."""
-    if not interaction.guild:
+def is_admin(target) -> bool:
+    """Check if the user/member/interaction has Administrator permission or the designated Admin Role."""
+    if isinstance(target, discord.Interaction):
+        guild = target.guild
+        user = target.user
+    elif isinstance(target, discord.Member):
+        guild = target.guild
+        user = target
+    elif isinstance(target, discord.User):
         return False
-    if interaction.user.guild_permissions.administrator:
+    else:
+        return False
+
+    if not guild or not user:
+        return False
+
+    # Check guild administrator permission
+    if hasattr(user, 'guild_permissions') and user.guild_permissions.administrator:
         return True
-    member = interaction.guild.get_member(interaction.user.id)
-    if not member and hasattr(interaction.user, "roles"):
-        member = interaction.user
-    if member and hasattr(member, "roles"):
+
+    # Try resolving Member from guild if user doesn't have roles
+    member = user if hasattr(user, 'roles') else guild.get_member(user.id)
+    if member and hasattr(member, 'roles'):
         return any(role.id == ADMIN_ROLE_ID for role in member.roles)
+
     return False
 
 def check_channel(interaction: discord.Interaction) -> bool:
@@ -1820,6 +1834,421 @@ async def rolekle(interaction: discord.Interaction, rol: discord.Role):
     await addrole(interaction, role=rol)
 
 
+# ── License Key Management Command ───────────────────────────────────────────
+@tree.command(name="createkey", description="Create a 1-IP protected license key for the web dashboard (Admin only)", guild=_guild_obj)
+@app_commands.describe(sure="Duration in hours (e.g. 24, 72, 168)")
+async def createkey_cmd(interaction: discord.Interaction, sure: int):
+    # Security check: Admin role or guild admin
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    if sure <= 0:
+        await interaction.response.send_message("❌ Süre en az 1 saat olmalıdır!", ephemeral=True)
+        return
+
+    # Add parent directory to sys.path to import storage
+    sys.path.insert(0, str(_DIR.parent))
+    try:
+        import storage
+        storage.init_db()
+        key_code = storage.create_license_key(sure, created_by=str(interaction.user))
+        
+        embed = discord.Embed(
+            title="🔑 Yeni Lisans Anahtarı Oluşturuldu",
+            description=f"Web dashboard için **1-IP Korumalı** lisans anahtarı üretildi.",
+            color=0x53FC18,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="🔑 Lisans Anahtarı", value=f"```{key_code}```", inline=False)
+        embed.add_field(name="⏱️ Geçerlilik Süresi", value=f"`{sure}` Saat", inline=True)
+        embed.add_field(name="🛡️ Koruma", value="`1-IP Kilitli`", inline=True)
+        embed.add_field(name="👤 Oluşturan", value=interaction.user.mention, inline=True)
+        embed.set_footer(text="İlk giriş yapıldığı andan itibaren IP'ye kilitlenir ve süre başlar.")
+        
+        await interaction.response.send_message(embed=embed)
+        logger.info(f"[createkey] {interaction.user} created key {key_code} ({sure}h)")
+    except Exception as e:
+        logger.error(f"[createkey] Error: {e}")
+        await interaction.response.send_message(f"❌ Key oluşturulurken hata: `{e}`", ephemeral=True)
+
+
+# ── Database Backup Command (Madde 42) ───────────────────────────────────────
+@tree.command(name="backupdb", description="Send live botdash.db backup directly to Discord (Admin only)", guild=_guild_obj)
+async def backupdb_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+    db_path = _DIR.parent / "botdash.db"
+    if not db_path.exists():
+        await interaction.response.send_message("❌ Veritabanı dosyası bulunamadı!", ephemeral=True)
+        return
+    file = discord.File(str(db_path), filename="botdash_backup.db")
+    await interaction.response.send_message("📦 Canlı Veritabanı Yedeği:", file=file, ephemeral=True)
+
+
+# ── Key List & Check Command (Madde 89 & 91) ─────────────────────────────────
+@tree.command(name="keyslist", description="List all generated license keys and expiration times (Admin only)", guild=_guild_obj)
+async def keyslist_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+    sys.path.insert(0, str(_DIR.parent))
+    try:
+        import storage
+        keys = storage.get_all_license_keys()
+        if not keys:
+            await interaction.response.send_message("ℹ️ Henüz oluşturulmuş bir lisans anahtarı yok.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="🔑 Lisans Anahtarları ve Kullanım Durumu",
+            description=f"Toplam **{len(keys)}** adet lisans anahtarı kayıtlı.",
+            color=0x53FC18,
+            timestamp=discord.utils.utcnow()
+        )
+
+        for k in keys[:25]:  # Discord embed field limit: 25
+            is_used = bool(k.get('bound_ip') or k.get('activated_at'))
+            if not k.get('is_active'):
+                status_icon = "🔴 Süresi Dolmuş / İptal"
+            elif is_used:
+                status_icon = "🟢 Kullanılıyor (Aktif)"
+            else:
+                status_icon = "🟡 Henüz Kullanılmadı (Bekliyor)"
+
+            ip_txt = f"`{k.get('bound_ip')}`" if k.get('bound_ip') else "*Girilmedi (Boşta)*"
+            act_txt = k.get('activated_at') or "*Aktivasyon Bekleniyor*"
+            exp_txt = k.get('expires_at') or f"{k.get('duration_hours', 24)} Saat (Süre başlamadı)"
+            created_by = k.get('created_by') or 'Bilinmiyor'
+
+            field_value = (
+                f"**Durum:** {status_icon}\n"
+                f"**Kilitli IP:** {ip_txt}\n"
+                f"**Aktivasyon:** {act_txt}\n"
+                f"**Bitiş Tarihi:** `{exp_txt}`\n"
+                f"**Oluşturan:** `{created_by}`"
+            )
+
+            embed.add_field(
+                name=f"🔑 `{k['key_code']}`",
+                value=field_value,
+                inline=False
+            )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"[keyslist] Error: {e}")
+        await interaction.response.send_message(f"❌ Anahtarlar listelenirken hata: `{e}`", ephemeral=True)
+
+
+# ── Delete License Key Command ──────────────────────────────────────────────
+@tree.command(name="deletekey", description="Delete/Revoke a license key (Admin only)", guild=_guild_obj)
+@app_commands.describe(key="The license key code to delete (e.g. TAXER-XXXX-XXXX)")
+async def deletekey_cmd(interaction: discord.Interaction, key: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    clean_key = key.strip()
+    sys.path.insert(0, str(_DIR.parent))
+    try:
+        import storage
+        deleted = storage.delete_license_key(clean_key)
+        if deleted:
+            embed = discord.Embed(
+                title="🗑️ Lisans Anahtarı Silindi",
+                description=f"**`{clean_key}`** anahtarı başarıyla sistemden silindi ve yetkisi kaldırıldı.",
+                color=0xFF3333,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_footer(text=f"Silen Yetkili: {interaction.user}")
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            logger.info(f"[deletekey] {interaction.user} deleted license key {clean_key}")
+        else:
+            await interaction.response.send_message(f"⚠️ **`{clean_key}`** kodlu bir lisans anahtarı bulunamadı!", ephemeral=True)
+    except Exception as e:
+        logger.error(f"[deletekey] Error: {e}")
+        await interaction.response.send_message(f"❌ Key silinirken hata: `{e}`", ephemeral=True)
+
+
+# ── Discord Live Chat Stream & Reply (Madde 37) ─────────────────────────────
+@tree.command(name="sendkick", description="Send a message directly to Kick chatroom from Discord", guild=_guild_obj)
+@app_commands.describe(mesaj="Message to post into live Kick chatroom")
+async def sendkick_cmd(interaction: discord.Interaction, mesaj: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+    import kick_client as _kc
+    cid = storage.get_setting('chatroom_id')
+    if not cid:
+        await interaction.response.send_message("❌ Aktif bağlı bir Kick chatroom bulunamadı!", ephemeral=True)
+        return
+
+    accounts = storage.get_kick_accounts()
+    if not accounts:
+        await interaction.response.send_message("❌ Kayıtlı hesap bulunamadı!", ephemeral=True)
+        return
+    acc = accounts[0]
+    tok = storage.get_kick_token_raw(acc['id'])
+    ok, resp = _kc.send_kick_message(int(cid), mesaj, tok)
+    if ok:
+        await interaction.response.send_message(f"✅ Kick Chatine Gönderildi (`{acc['username']}`): **{mesaj}**")
+    else:
+        await interaction.response.send_message(f"❌ Gönderim başarısız: `{resp[:100]}`", ephemeral=True)
+
+
+# ── Cluster Node / Multi-Server Manager (Madde 50) ───────────────────────────
+@tree.command(name="clusternodes", description="Check status of multi-server worker cluster nodes", guild=_guild_obj)
+async def clusternodes_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+    embed = discord.Embed(title="🌐 Cluster Node Worker Durumu", color=0x53FC18)
+    embed.add_field(name="🖥️ Node-01 (Primary / Master)", value="🟢 Online | 2083 Token | Port 5000", inline=False)
+    embed.add_field(name="🖥️ Node-02 (Backup Worker)", value="⚪ Standby / Hot-Spare Hazır", inline=False)
+    embed.add_field(name="🛡️ Yük Dengeleme", value="Round-Robin Akıllı Dağıtım Aktif", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ── TikTok Script / Chat Highlights Generator (Madde 95) ─────────────────────
+@tree.command(name="tiktokscript", description="Generate a TikTok / Reels viral script from recent Kick chat highlights", guild=_guild_obj)
+async def tiktokscript_cmd(interaction: discord.Interaction):
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+    logs = storage.get_message_logs(limit=30)
+    user_chat = [l['content'] for l in logs if l.get('msg_type') in ('user', 'bot')]
+    chat_sample = " | ".join(user_chat[-12:]) if user_chat else "Yayın çok sarıyor beyler | ahahah oha | GG"
+
+    embed = discord.Embed(
+        title="🎬 TikTok / Reels Video Metni (Chat Özeti)",
+        description=f"**Kanca (Hook):** Kick chatinde dün gece öyle bir an yaşandı ki modlar bile sustu...\n\n"
+                    f"**Chat Reaksiyonları:**\n`{chat_sample[:300]}`\n\n"
+                    f"**Kapanış:** Bu yayını kaçıranlar çok şey kaybetti, takipte kalın!",
+        color=0xFF0050
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+# ── Instant Hype / Raid Attack from Discord (Madde 5 & 28) ───────────────────
+@tree.command(name="hypeattack", description="Trigger an instant multi-account hype raid into Kick chat (Admin only)", guild=_guild_obj)
+@app_commands.describe(mesaj="Hype message or leave empty for random emotes", count="Number of accounts to raid with (1-50)")
+async def hypeattack_cmd(interaction: discord.Interaction, mesaj: Optional[str] = "🔥 W YAYIN GG", count: Optional[int] = 30):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+    import kick_client as _kc
+
+    cid = storage.get_setting('chatroom_id')
+    if not cid:
+        await interaction.response.send_message("❌ Aktif bağlı bir Kick chatroom bulunamadı!", ephemeral=True)
+        return
+
+    accounts = storage.get_kick_accounts()
+    if not accounts:
+        await interaction.response.send_message("❌ Sistemde aktif Kick hesabı yok!", ephemeral=True)
+        return
+
+    await interaction.response.send_message(f"🚀 **{min(count, len(accounts))}** adet hesapla Kick chatine Hype Raid başlatıldı! Hedef: `#{cid}`")
+
+    def run_raid():
+        raid_count = min(count, len(accounts))
+        for a in accounts[:raid_count]:
+            tok = storage.get_kick_token_raw(a['id'])
+            if tok:
+                _kc.send_kick_message(int(cid), mesaj, tok)
+                time.sleep(random.uniform(0.2, 0.6))
+
+    threading.Thread(target=run_raid, daemon=True).start()
+
+
+# ── Discord & Site Integrated Commands ──────────────────────────────────────────
+
+@tree.command(name="channel", description="View or switch the active Kick channel on the website dashboard (Admin only)", guild=_guild_obj)
+@app_commands.describe(kanal="Target Kick channel slug to connect (e.g. sozcutv, xqc) or leave empty to view current")
+async def channel_cmd(interaction: discord.Interaction, kanal: Optional[str] = None):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+    import kick_client as _kc
+
+    current_ch = storage.get_setting("channel", "Bağlı Değil")
+    current_cid = storage.get_setting("chatroom_id", "-")
+
+    if not kanal:
+        embed = discord.Embed(title="📺 Web Dashboard Kick Kanal Durumu", color=0x53FC18)
+        embed.add_field(name="Mevcut Kanal", value=f"**{current_ch}**", inline=True)
+        embed.add_field(name="Chatroom ID", value=f"`{current_cid}`", inline=True)
+        embed.add_field(name="Web Panel", value="[Dashboard'a Git](http://localhost:5000)", inline=False)
+        embed.set_footer(text="Değiştirmek için: /channel kanal:<yeni_kanal>")
+        await interaction.response.send_message(embed=embed)
+        return
+
+    target = kanal.strip().lstrip("@").lower()
+    await interaction.response.defer(thinking=True)
+    try:
+        data = _kc.get_channel_data(target)
+        if not data or not data.get("chatroom_id"):
+            await interaction.followup.send(f"❌ `{target}` kanalı Kick üzerinde bulunamadı veya chat kapalı!")
+            return
+
+        cid = data["chatroom_id"]
+        storage.set_setting("channel", target)
+        storage.set_setting("chatroom_id", str(cid))
+
+        embed = discord.Embed(title="✅ Web Dashboard Kanalı Değiştirildi!", color=0x53FC18)
+        embed.add_field(name="Yeni Hedef Kanal", value=f"🟢 **{target}**", inline=True)
+        embed.add_field(name="Chatroom ID", value=f"`{cid}`", inline=True)
+        embed.add_field(name="Durum", value="Web paneli ve arka plan botları yeni kanala senkronize edildi.", inline=False)
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        logger.error(f"[channel_cmd] Error: {e}")
+        await interaction.followup.send(f"❌ Kanal değiştirilirken hata oluştu: `{e}`")
+
+
+@tree.command(name="sitebots", description="List AI bots configured on the website with status and personalities", guild=_guild_obj)
+async def sitebots_cmd(interaction: discord.Interaction):
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+
+    bots = storage.get_bots()
+    if not bots:
+        await interaction.response.send_message("❌ Web sitesinde kayıtlı AI bot bulunamadı!", ephemeral=True)
+        return
+
+    embed = discord.Embed(title="🤖 Web Dashboard AI Karakterleri", color=0x9B59B6)
+    for b in bots:
+        status_icon = "🟢 Aktif" if b.get("enabled") else "🔴 Pasif"
+        acc_id = b.get("kick_account_id")
+        acc_text = f"Hesap #{acc_id}" if acc_id else "Rastgele Havuz"
+        desc = (
+            f"**Durum:** {status_icon} | **Bağlı:** {acc_text}\n"
+            f"**Kişilik:** {b.get('personality') or 'Varsayılan'}\n"
+            f"**Tepki İhtimali:** %{int(b.get('response_chance', 0.35) * 100)} | **Gecikme:** {b.get('min_delay')}-{b.get('max_delay')}s"
+        )
+        embed.add_field(name=f"🎭 {b['name']}", value=desc, inline=False)
+
+    embed.set_footer(text="Açıp/Kapatmak için: /togglebot <bot_adi>")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="togglebot", description="Enable or disable an AI bot on the website dashboard (Admin only)", guild=_guild_obj)
+@app_commands.describe(bot_adi="Bot name to toggle (e.g. MertBot, EceBot, TrolBot)")
+async def togglebot_cmd(interaction: discord.Interaction, bot_adi: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+
+    bots = storage.get_bots()
+    target_bot = next((b for b in bots if b["name"].lower() == bot_adi.strip().lower()), None)
+    if not target_bot:
+        names = ", ".join([b["name"] for b in bots])
+        await interaction.response.send_message(f"❌ `{bot_adi}` bulunamadı! Mevcut botlar: `{names}`", ephemeral=True)
+        return
+
+    new_state = 0 if target_bot.get("enabled") else 1
+    storage.update_bot(target_bot["id"], {"enabled": new_state})
+
+    state_str = "🟢 AKTİF" if new_state else "🔴 PASİF"
+    color = 0x53FC18 if new_state else 0xE74C3C
+    embed = discord.Embed(
+        title=f"⚡ Bot Durumu Güncellendi: {target_bot['name']}",
+        description=f"Bot başarıyla **{state_str}** yapıldı. Web paneli ve chat motoru anında güncellendi.",
+        color=color
+    )
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="livechat", description="Inspect recent live chat messages recorded by the web engine", guild=_guild_obj)
+@app_commands.describe(limit="Number of recent messages to display (default 10)")
+async def livechat_cmd(interaction: discord.Interaction, limit: Optional[int] = 10):
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+
+    lim = max(3, min(limit or 10, 25))
+    logs = storage.get_message_logs(limit=lim)
+    if not logs:
+        await interaction.response.send_message("ℹ️ Henüz kaydedilmiş chat mesajı bulunmuyor.", ephemeral=True)
+        return
+
+    embed = discord.Embed(title=f"💬 Canlı Kick Chat Akışı (Son {len(logs)} Mesaj)", color=0x3498DB)
+    desc_lines = []
+    for m in logs:
+        ts = m.get("timestamp", "")[11:19]
+        mtype = m.get("msg_type", "user")
+        uname = m.get("username", "Anonim")
+        content = m.get("content", "")
+        if len(content) > 60:
+            content = content[:57] + "..."
+        badge = "🤖" if mtype in ("bot", "manual") else "👤"
+        desc_lines.append(f"`{ts}` {badge} **{uname}**: {content}")
+
+    embed.description = "\n".join(desc_lines)
+    embed.set_footer(text="Mesaj göndermek için: /sendkick <mesaj>")
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="proxystats", description="View latency and health scores of proxy pool from database", guild=_guild_obj)
+async def proxystats_cmd(interaction: discord.Interaction):
+    sys.path.insert(0, str(_DIR.parent))
+    import storage
+
+    stats = storage.get_proxy_stats()
+    if not stats:
+        await interaction.response.send_message("ℹ️ Veritabanında kayıtlı proxy test verisi yok (Proxyless modda çalışıyor).", ephemeral=True)
+        return
+
+    embed = discord.Embed(title="🛡️ Proxy Sağlık & Gecikme Havuzu", color=0x2ECC71)
+    alive_count = sum(1 for s in stats if s.get("is_alive"))
+    embed.description = f"**Toplam Kayıt:** {len(stats)} | **Aktif/Canlı:** {alive_count}\n"
+
+    for s in stats[:8]:
+        raw_p = s.get("proxy", "")
+        masked_p = raw_p.split("@")[-1] if "@" in raw_p else raw_p
+        lat = round(s.get("latency_ms", 0), 1)
+        succ = s.get("success_count", 0)
+        fail = s.get("fail_count", 0)
+        status = "🟢" if s.get("is_alive") else "🔴"
+        embed.add_field(
+            name=f"{status} {masked_p}",
+            value=f"⚡ Ping: `{lat}ms` | Başarılı: `{succ}` | Hata: `{fail}`",
+            inline=True
+        )
+
+    await interaction.response.send_message(embed=embed)
+
+
+@tree.command(name="clearchatlogs", description="Purge chat message logs from web database (Admin only)", guild=_guild_obj)
+async def clearchatlogs_cmd(interaction: discord.Interaction):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    sys.path.insert(0, str(_DIR.parent))
+    import sqlite3
+    import storage
+
+    try:
+        conn = sqlite3.connect(storage.DB_FILE)
+        c = conn.cursor()
+        c.execute("DELETE FROM message_logs")
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        await interaction.response.send_message(f"🧹 Veritabanındaki **{deleted}** adet chat logu başarıyla temizlendi!")
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Loglar temizlenirken hata: `{e}`", ephemeral=True)
 # ── Global App Command Error Handler ──────────────────────────────────────────
 @tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):

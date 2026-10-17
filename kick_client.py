@@ -94,14 +94,75 @@ def get_channel_info(channel_input: str):
 
 
 # ──────────────────────────────────────────────
-# Send Message
+# Proxy Management
 # ──────────────────────────────────────────────
 
-def send_kick_message(chatroom_id, content: str, bearer_token: str):
+_PROXIES_CACHE = []
+_PROXY_INDEX = 0
+_PROXY_LOCK = threading.Lock()
+
+def load_proxies_list():
+    global _PROXIES_CACHE
+    import os
+    candidates = ['proxies.txt', 'discordbot/proxies.txt']
+    loaded = []
+    for p in candidates:
+        if os.path.exists(p):
+            try:
+                with open(p, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            parts = line.split(':')
+                            if len(parts) == 4:
+                                ip, port, u, pwd = parts
+                                loaded.append(f'http://{u}:{pwd}@{ip}:{port}')
+                            elif len(parts) == 2:
+                                ip, port = parts
+                                loaded.append(f'http://{ip}:{port}')
+            except Exception as e:
+                logger.warning(f'Error reading proxy file {p}: {e}')
+    _PROXIES_CACHE = loaded
+    return _PROXIES_CACHE
+
+def get_next_proxy(priority_low_latency: bool = False):
     """
-    Send a message to Kick chat.
+    Proxy Hızına Göre Yük Dengeleme (Madde 81) & Residential/Datacenter Ayrımı (Madde 82).
+    Düşük pingli (<200ms) proxy'lere reaksiyon/hype için öncelik verir.
+    """
+    global _PROXY_INDEX
+    with _PROXY_LOCK:
+        if not _PROXIES_CACHE:
+            load_proxies_list()
+        if not _PROXIES_CACHE:
+            return None
+
+        # Check DB for best scored proxies if low latency requested
+        import storage
+        try:
+            stats = storage.get_proxy_stats()
+            alive_fast = [s['proxy'] for s in stats if s.get('is_alive') and 0 < s.get('latency_ms', 9999) < 250]
+            if priority_low_latency and alive_fast:
+                proxy_url = random.choice(alive_fast)
+                return {'http': proxy_url, 'https': proxy_url}
+        except Exception:
+            pass
+
+        proxy_url = _PROXIES_CACHE[_PROXY_INDEX % len(_PROXIES_CACHE)]
+        _PROXY_INDEX += 1
+        return {'http': proxy_url, 'https': proxy_url}
+
+
+# ──────────────────────────────────────────────
+# Send Message (with Proxy & Direct Fallback)
+# ──────────────────────────────────────────────
+
+def send_kick_message(chatroom_id, content: str, bearer_token: str, use_proxy: bool = True):
+    """
+    Send a message to Kick chat with Proxy scoring, Auto-brake on 429, and Direct Fallback.
     Returns (success: bool, response_text: str)
     """
+    import storage
     token = bearer_token.strip()
     if token.startswith("Bearer "):
         token = token[7:].strip()
@@ -112,10 +173,64 @@ def send_kick_message(chatroom_id, content: str, bearer_token: str):
         'Content-Type': 'application/json',
     }
     payload = {'content': content, 'type': 'message'}
+
+    # Helper for followers only auto-bypass
+    def _check_and_bypass_followers_only(resp_status, resp_text):
+        if resp_status == 400 and 'FOLLOWERS_ONLY_ERROR' in resp_text:
+            channel_slug = storage.get_setting('channel')
+            if channel_slug:
+                try:
+                    logger.info(f"[Auto-Bypass] Channel is followers-only! Auto-following {channel_slug}...")
+                    follow_url = f'https://kick.com/api/v2/channels/{channel_slug}/follow'
+                    follow_headers = {**_HEADERS, 'Authorization': f'Bearer {token}'}
+                    requests.post(follow_url, headers=follow_headers, timeout=5)
+                    time.sleep(1.0)
+                    retry_resp = requests.post(url, json=payload, headers=headers, timeout=7)
+                    if retry_resp.status_code in (200, 201):
+                        return True, retry_resp.text
+                except Exception as fe:
+                    logger.warning(f"Auto-follow bypass error: {fe}")
+        return False, resp_text
+
+    # 1. Try with proxy if enabled
+    if use_proxy:
+        proxies = get_next_proxy()
+        if proxies:
+            proxy_addr = proxies.get('http', '')
+            t0 = time.time()
+            try:
+                resp = requests.post(url, json=payload, headers=headers, proxies=proxies, timeout=7)
+                latency = (time.time() - t0) * 1000
+                if resp.status_code in (200, 201):
+                    storage.record_proxy_result(proxy_addr, True, latency)
+                    return True, resp.text
+                elif resp.status_code == 429:
+                    logger.warning("[Auto-Brake] 429 Rate limit hit on proxy, cooling down 3s...")
+                    time.sleep(3.0)
+                    storage.record_proxy_result(proxy_addr, False, latency)
+                else:
+                    bypassed, byp_resp = _check_and_bypass_followers_only(resp.status_code, resp.text)
+                    if bypassed:
+                        storage.record_proxy_result(proxy_addr, True, latency)
+                        return True, byp_resp
+                    storage.record_proxy_result(proxy_addr, False, latency)
+            except Exception as pe:
+                storage.record_proxy_result(proxy_addr, False, 9999)
+                logger.debug(f'Proxy attempt failed ({pe}), falling back to direct connection...')
+
+    # 2. Direct fallback (kendi IP'si üzerinden çalışma garantisi)
     try:
+        t0 = time.time()
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        ok = resp.status_code in (200, 201)
-        return ok, resp.text
+        if resp.status_code == 429:
+            logger.warning("[Auto-Brake] 429 Rate limit on Direct IP, sleeping 2.5s...")
+            time.sleep(2.5)
+        if resp.status_code in (200, 201):
+            return True, resp.text
+        bypassed, byp_resp = _check_and_bypass_followers_only(resp.status_code, resp.text)
+        if bypassed:
+            return True, byp_resp
+        return False, resp.text
     except Exception as e:
         logger.error(f'send_kick_message error: {e}')
         return False, str(e)
@@ -245,6 +360,28 @@ class KickChatClient:
                 else:
                     msg_data = {}
                 self._handle_chat(msg_data)
+
+            elif 'StreamHostEvent' in event:
+                # Madde 28: Raid Karşılama
+                logger.info(f"Raid detected! Data: {data}")
+                if self.on_message_cb:
+                    self.on_message_cb({'type': 'raid', 'content': 'Raid geldi!', 'username': 'KickRaid'})
+
+            elif 'PollUpdateEvent' in event:
+                # Madde 29: Anket / Poll Algılayıcı
+                logger.info(f"Poll update event: {data}")
+                if self.on_message_cb:
+                    self.on_message_cb({'type': 'poll', 'content': 'Anket açıldı!', 'username': 'KickPoll'})
+
+            elif 'ChannelUpdatedEvent' in event or 'StreamUpdateEvent' in event:
+                # Madde 67: Kategori / Yayın başlığı değişimi algılayıcı
+                logger.info(f"[Kategori/Başlık Değişimi] Event: {event}, Data: {data}")
+                if self.on_message_cb:
+                    self.on_message_cb({'type': 'category_change', 'content': 'Yayın başlığı veya kategorisi güncellendi!', 'username': 'KickSystem'})
+
+            elif 'ChatroomUpdatedEvent' in event:
+                # Madde 5 & 14: Slow Mode & Sub-Only Mode tespiti
+                logger.info(f"Chatroom settings updated: {data}")
 
             elif event == 'pusher:ping':
                 ws.send(json.dumps({'event': 'pusher:pong', 'data': {}}))

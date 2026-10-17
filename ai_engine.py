@@ -14,31 +14,105 @@ logger = logging.getLogger(__name__)
 # System Prompt Builder
 # ──────────────────────────────────────────────
 
-def build_system_prompt(bot: dict) -> str:
+# ──────────────────────────────────────────────
+# Typo Generator (1 in 30 chance)
+# ──────────────────────────────────────────────
+
+_NEARBY_KEYS = {
+    'a': 's', 's': 'a', 'd': 's', 'e': 'w', 'r': 'e', 't': 'r',
+    'k': 'l', 'l': 'k', 'm': 'n', 'n': 'm', 'o': 'p', 'p': 'o',
+    'i': 'ı', 'ı': 'i', 'u': 'y', 'y': 'u', 'c': 'v', 'v': 'c'
+}
+
+def apply_human_typo(text: str, chance: float = 1/30) -> str:
+    """Simulates realistic human keyboard typos roughly once in 30 messages."""
+    if not text or len(text) < 4:
+        return text
+    if random.random() > chance:
+        return text
+
+    idx = random.randint(1, len(text) - 2)
+    char = text[idx].lower()
+    if char in _NEARBY_KEYS:
+        rep = _NEARBY_KEYS[char]
+        return text[:idx] + rep + text[idx+1:]
+    return text
+
+
+# ──────────────────────────────────────────────
+# Keyword Trigger Engine (Hızlı Doğal Replikler)
+# ──────────────────────────────────────────────
+
+KEYWORD_TRIGGERS = {
+    'çekiliş': ['çekiliş ne zaman beyler', 'katıldık bakalım', 'bize çıkmaz'],
+    'dc': ['dc linki bio da var kanka', 'discordda ses var mı'],
+    'insta': ['instası açıklamada yazıyor', 'insta story atmış mı'],
+    'drop': ['drop var mı yayında', 'drops açık mı'],
+    'dondu': ['bende donmadı kanka f5 at', 'yayın akıcı bende', 'ufak takıldı geldi'],
+    'ses yok': ['ses geliyor kanka', 'kulaklığı kontrol et'],
+}
+
+def check_keyword_trigger(content: str) -> str | None:
+    cl = content.lower()
+    for kw, replies in KEYWORD_TRIGGERS.items():
+        if kw in cl:
+            return random.choice(replies)
+    return None
+
+
+# Doğal Türk internet random kahkahaları (Madde 62)
+TURKISH_RANDOM_LAUGHS = [
+    "ahahah", "sadasdas", "koptum amk", "DKJASGDJSAGD", "asdasfads", "harbi mi lan ahahah"
+]
+
+def build_system_prompt(bot: dict, sentiment: str = 'neutral', bot_role: str = None, regional_dialect: str = None, is_derby_day: bool = False) -> str:
     custom = (bot.get('system_prompt') or '').strip()
     if custom:
         return custom
 
+    mood_note = ""
+    if sentiment == 'hype':
+        mood_note = "Chat şu an çok coşkulu ve hype! Sen de heyecanlı ve enerjik katıl."
+    elif sentiment == 'toxic':
+        mood_note = "Chatte gerginlik var, ortalığı yumuşat veya taşak geçerek olayı dağıt."
+
+    # Madde 53: Futbol / Derbi Gündemi
+    derby_note = ""
+    if is_derby_day or random.random() < 0.12:
+        derby_note = "\nGündem Notu (Madde 53): Bugün maç/derbi günü havası var, araya bazen hafif futbol lafı veya skor muhabbeti sıkıştırabilirsin ('maçı izledin mi', 'gs mi fb mi', 'hakem doğradı valla')."
+
+    # Madde 77: Bölgesel Dil & Ağız Adaptasyonu
+    dialect_note = ""
+    if regional_dialect == 'ege':
+        dialect_note = "\nŞive/Ağız Notu (Madde 77 - Ege): Arada hafif Ege ağzı kullan ('gari', 'nörüyon', 'bakar mısın gari', 'geliver')."
+    elif regional_dialect == 'karadeniz':
+        dialect_note = "\nŞive/Ağız Notu (Madde 77 - Karadeniz): Arada Karadeniz şivesi esintisi kat ('ula', 'da', 'habu', 'uşağum', 'hade da')."
+
+    personality = bot.get('personality', 'Samimi izleyici')
+
     return f"""Sen "{bot['name']}" adında Kick.com chatinde takılan samimi bir botsun.
+Karakterin ve Rolün: {personality}
+{mood_note}{derby_note}{dialect_note}
 
 ## KONUŞMA VE ÜSLUP KURALLARI (ÇOK ÖNEMLİ):
 1. CHAT KISALTMALARINI BİL VE UYGULA:
    - "sa" = "selamın aleyküm" / "selam" demektir.
    - "as" = "aleyküm selam", "hg" = "hoş geldin", "hb" = "hoş bulduk", "eyv" = "eyvallah" anlamındadır.
-2. Kesinlikle RESMİ ve KİBAR DİL KULLANMA! ("Selam! İyiyim sağol, sen nasılsın? Uzun zamandır görüşmüyorduk" gibi yapay/robotik/uzun cümleler KURMA).
+2. Kesinlikle RESMİ ve KİBAR DİL KULLANMA! ("Selam! İyiyim sağol, sen nasılsın?" gibi robotik cümleler ASLA KURMA).
 3. Gerçek bir Kick chat kullanıcısı gibi samimi, rahat ve sokağın diliyle yaz.
 4. Noktalama işaretlerine (nokta, virgül vb.) UYMA, büyük-küçük harf kurallarına dikkat ETME (küçük harflerle rahat yaz).
 5. Mesajların 1 ile 5 kelime arasında ÇOK KISA olsun. Uzun laf kalabalığı yapma.
-6. Örnek konuşma tarzları: "as hg kanka", "nörüyon", "iyidir senden naber", "eyv kanka", "valla aynen", "as hg", "ahahah harbi mi".
-7. Hakaret, küfür, nefret söylemi gerekli yerlerde üret.
-8. Prefix ([İsim]: vb.) veya tırnak işareti KULLANMA, sadece direkt mesajı yaz."""
+6. Örnek konuşma tarzları: "as hg kanka", "nörüyon", "iyidir senden naber", "eyv kanka", "valla aynen", "as hg", "ahahah harbi mi", "koptum amk".
+7. Yayıncıya bazen destek çık ("hadi be abi sen alırsın"), bazen hafif takıl ("yine mi öldün ya").
+8. Komik durumlarda random gülüş at ("asdsad", "koptum amk").
+9. Prefix ([İsim]: vb.) veya tırnak işareti KULLANMA, sadece direkt mesajı yaz."""
 
 
 # ──────────────────────────────────────────────
 # Context Builder
 # ──────────────────────────────────────────────
 
-def build_context_messages(chat_history: list, incoming: dict, bot_name: str) -> list:
+def build_context_messages(chat_history: list, incoming: dict, bot_name: str, user_mem: dict = None) -> list:
     messages = []
     # Last 15 messages as context
     for msg in list(chat_history)[-15:]:
@@ -50,15 +124,19 @@ def build_context_messages(chat_history: list, incoming: dict, bot_name: str) ->
             if msg.get('bot_name') == bot_name:
                 messages.append({'role': 'assistant', 'content': content_text})
             else:
-                # Other bots in conversation
                 messages.append({'role': 'user', 'content': f'[{msg.get("bot_name", uname)}] {content_text}'})
         else:
             messages.append({'role': 'user', 'content': f'[{uname}] {content_text}'})
 
-    # Add the current triggering message
+    # User memory hint if returning chatter
+    chatter_note = ""
+    if user_mem and user_mem.get('message_count', 0) > 3:
+        chatter_note = f" (Not: Bu izleyici chatin müdavimi, daha önce {user_mem['message_count']} mesaj yazdı)"
+
+    # Add current triggering message
     messages.append({
         'role': 'user',
-        'content': f'[{incoming["username"]}] {incoming["content"]}'
+        'content': f'[{incoming["username"]}{chatter_note}] {incoming["content"]}'
     })
     return messages
 
@@ -68,15 +146,23 @@ def build_context_messages(chat_history: list, incoming: dict, bot_name: str) ->
 # ──────────────────────────────────────────────
 
 def generate_response(bot: dict, chat_history: list, incoming: dict,
-                       api_key: str, base_url: str, model: str):
+                       api_key: str, base_url: str, model: str,
+                       sentiment: str = 'neutral', user_mem: dict = None,
+                       regional_dialect: str = None, is_derby_day: bool = False):
     """
     Returns (response_text, error_code | None)
     error_code: None = success, 'rate_limit', 'auth_error', 'timeout', str = other
     """
+    # 1. Quick check for natural keyword trigger first (super fast and organic)
+    if random.random() < 0.25:
+        kw_reply = check_keyword_trigger(incoming.get('content', ''))
+        if kw_reply:
+            return apply_human_typo(kw_reply), None
+
     try:
         client = openai.OpenAI(api_key=api_key, base_url=base_url, timeout=20)
-        system_prompt = build_system_prompt(bot)
-        ctx = build_context_messages(chat_history, incoming, bot['name'])
+        system_prompt = build_system_prompt(bot, sentiment=sentiment, regional_dialect=regional_dialect, is_derby_day=is_derby_day)
+        ctx = build_context_messages(chat_history, incoming, bot['name'], user_mem=user_mem)
 
         resp = client.chat.completions.create(
             model=model,
@@ -89,6 +175,8 @@ def generate_response(bot: dict, chat_history: list, incoming: dict,
         text = resp.choices[0].message.content.strip()
         # Strip any accidental prefix like "[BotName]: " the model might add
         text = re.sub(r'^\[.*?\]\s*:?\s*', '', text).strip()
+        # Apply 1/30 typo chance
+        text = apply_human_typo(text, chance=1/30)
         return text, None
 
     except openai.RateLimitError:
