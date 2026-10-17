@@ -1853,6 +1853,24 @@ async def createkey_cmd(interaction: discord.Interaction, sure: int):
         import storage
         storage.init_db()
         key_code = storage.create_license_key(sure, created_by=str(interaction.user))
+
+        # Sync to remote Render deployment if available
+        remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
+        admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{remote_url}/api/admin/key-sync",
+                    json={"action": "create", "key_code": key_code, "duration_hours": sure, "created_by": str(interaction.user)},
+                    headers={"X-Admin-Secret": admin_secret},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        logger.info(f"[createkey] Synced {key_code} to remote {remote_url}")
+                    else:
+                        logger.warning(f"[createkey] Remote sync status: {resp.status}")
+        except Exception as sync_err:
+            logger.warning(f"[createkey] Remote sync skipped or failed: {sync_err}")
         
         embed = discord.Embed(
             title="🔑 Yeni Lisans Anahtarı Oluşturuldu",
@@ -1871,6 +1889,7 @@ async def createkey_cmd(interaction: discord.Interaction, sure: int):
     except Exception as e:
         logger.error(f"[createkey] Error: {e}")
         await interaction.response.send_message(f"❌ Key oluşturulurken hata: `{e}`", ephemeral=True)
+
 
 
 # ── Database Backup Command (Madde 42) ───────────────────────────────────────
@@ -1955,6 +1974,22 @@ async def deletekey_cmd(interaction: discord.Interaction, key: str):
     try:
         import storage
         deleted = storage.delete_license_key(clean_key)
+
+        # Sync key revocation to remote Render deployment
+        remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
+        admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{remote_url}/api/admin/key-sync",
+                    json={"action": "delete", "key_code": clean_key},
+                    headers={"X-Admin-Secret": admin_secret},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    logger.info(f"[deletekey] Remote revocation sent to {remote_url}, status: {resp.status}")
+        except Exception as sync_err:
+            logger.warning(f"[deletekey] Remote sync failed: {sync_err}")
+
         if deleted:
             embed = discord.Embed(
                 title="🗑️ Lisans Anahtarı Silindi",
@@ -1966,7 +2001,7 @@ async def deletekey_cmd(interaction: discord.Interaction, key: str):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             logger.info(f"[deletekey] {interaction.user} deleted license key {clean_key}")
         else:
-            await interaction.response.send_message(f"⚠️ **`{clean_key}`** kodlu bir lisans anahtarı bulunamadı!", ephemeral=True)
+            await interaction.response.send_message(f"⚠️ **`{clean_key}`** kodlu bir lisans anahtarı bulunamadı (Yerel ve uzaktan silinme sinyali yollandı).", ephemeral=True)
     except Exception as e:
         logger.error(f"[deletekey] Error: {e}")
         await interaction.response.send_message(f"❌ Key silinirken hata: `{e}`", ephemeral=True)

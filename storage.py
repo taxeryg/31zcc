@@ -170,25 +170,6 @@ def init_db():
 
     conn.commit()
 
-    # Render / Fresh deploy: Eğer license_keys boşsa varsayılan test/demo keyleri otomatik oluştur
-    try:
-        c.execute('SELECT COUNT(*) FROM license_keys')
-        if c.fetchone()[0] == 0:
-            default_keys = [
-                ('TAXER-VIP2026-PREMIUM', 720, 'render_system'),
-                ('TAXER-DEMO-001', 168, 'render_system'),
-                ('TAXER-0F4494C5-A3AA721C', 720, 'render_system'),
-                ('TAXER-756893ED-AA345DB6', 720, 'render_system'),
-                ('TAXER-775ABAC5-929BCE16', 720, 'render_system'),
-                ('TAXER-B3F29BF6-EBAA98D7', 720, 'render_system'),
-            ]
-            for k, dur, creator in default_keys:
-                c.execute('''INSERT OR IGNORE INTO license_keys (key_code, duration_hours, is_active, created_by)
-                             VALUES (?, ?, 1, ?)''', (k, dur, creator))
-            conn.commit()
-    except Exception as e:
-        logger.warning(f'Seed default keys error: {e}')
-
     # Otomatik geri yükleme: Eğer DB yeni oluşmuşsa ve persistent_storage.json varsa geri yükle
     if os.path.exists(BACKUP_FILE):
         try:
@@ -562,14 +543,19 @@ def export_all_data() -> dict:
     settings = {r[0]: r[1] for r in c.fetchall()}
 
     # 5. License Keys
-    c.execute('SELECT id, key_code, duration_hours, is_active, created_by FROM license_keys')
+    c.execute('SELECT id, key_code, duration_hours, created_at, activated_at, expires_at, bound_ip, bound_hwid, is_active, created_by FROM license_keys')
     license_keys = []
     for r in c.fetchall():
         license_keys.append({
             'key_code': r[1],
             'duration_hours': r[2],
-            'is_active': r[3],
-            'created_by': r[4]
+            'created_at': r[3],
+            'activated_at': r[4],
+            'expires_at': r[5],
+            'bound_ip': r[6],
+            'bound_hwid': r[7],
+            'is_active': r[8],
+            'created_by': r[9]
         })
     
     conn.close()
@@ -647,11 +633,22 @@ def restore_all_data(data: dict) -> bool:
         dur = lk.get('duration_hours', 24)
         active = lk.get('is_active', 1)
         creator = lk.get('created_by', 'system')
+        created_at = lk.get('created_at')
+        activated_at = lk.get('activated_at')
+        expires_at = lk.get('expires_at')
+        bound_ip = lk.get('bound_ip')
+        bound_hwid = lk.get('bound_hwid')
         if code:
-            c.execute('SELECT id FROM license_keys WHERE key_code=?', (code,))
-            if not c.fetchone():
-                c.execute('''INSERT INTO license_keys (key_code, duration_hours, is_active, created_by)
-                             VALUES (?, ?, ?, ?)''', (code, dur, active, creator))
+            c.execute('SELECT id FROM license_keys WHERE UPPER(TRIM(key_code))=UPPER(?)', (code,))
+            existing = c.fetchone()
+            if not existing:
+                c.execute('''INSERT INTO license_keys (key_code, duration_hours, created_at, activated_at, expires_at, bound_ip, bound_hwid, is_active, created_by)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                          (code, dur, created_at, activated_at, expires_at, bound_ip, bound_hwid, active, creator))
+            else:
+                c.execute('''UPDATE license_keys SET duration_hours=?, activated_at=?, expires_at=?, bound_ip=?, bound_hwid=?, is_active=?, created_by=?
+                             WHERE UPPER(TRIM(key_code))=UPPER(?)''',
+                          (dur, activated_at, expires_at, bound_ip, bound_hwid, active, creator, code))
         
     conn.commit()
     conn.close()
@@ -826,6 +823,7 @@ def create_license_key(duration_hours: int, created_by: str = 'discord') -> str:
                  VALUES (?, ?, 1, ?)''', (key_code, int(duration_hours), created_by))
     conn.commit()
     conn.close()
+    save_backup_file()
     return key_code
 
 
@@ -866,6 +864,7 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
                      WHERE id=?''', (now_str, exp_str, client_ip, client_hwid or '', kid))
         conn.commit()
         conn.close()
+        save_backup_file()
         return True, f'Key aktive edildi! Süre: {duration_hours} saat (Bitiş: {exp_str})'
 
     # Check IP Binding (Security Guard)
@@ -879,7 +878,7 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
 
     if bound_ip and _norm_ip(bound_ip) != _norm_ip(client_ip):
         conn.close()
-        return False, f'IP Uyuşmazlığı! Bu key başka bir IP adresine kilitlenmiş ({bound_ip}).'
+        return False, 'IP Uyuşmazlığı! Bu lisans anahtarı başka bir cihaza/ağa kilitlenmiş.'
 
     # Check HWID Binding if exists
     if bound_hwid and client_hwid and bound_hwid != client_hwid:
@@ -950,15 +949,49 @@ def get_all_license_keys():
     return [dict(zip(cols, r)) for r in rows]
 
 
+def get_license_key_info(key_code: str):
+    """Retrieve detailed expiration and status for a license key."""
+    if not key_code:
+        return None
+    key_code = key_code.strip()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('''SELECT id, key_code, duration_hours, created_at, activated_at, expires_at, bound_ip, is_active, created_by
+                 FROM license_keys WHERE UPPER(TRIM(key_code))=UPPER(?)''', (key_code,))
+    row = c.fetchone()
+    conn.close()
+    if not row:
+        return None
+    cols = ['id', 'key_code', 'duration_hours', 'created_at', 'activated_at', 'expires_at', 'bound_ip', 'is_active', 'created_by']
+    d = dict(zip(cols, row))
+    
+    # Calculate remaining time in seconds
+    remaining_sec = 0
+    if d.get('expires_at') and d.get('is_active'):
+        try:
+            exp_dt = datetime.strptime(d['expires_at'], '%Y-%m-%d %H:%M:%S')
+            diff = (exp_dt - datetime.utcnow()).total_seconds()
+            remaining_sec = max(0, int(diff))
+        except Exception:
+            pass
+    elif not d.get('activated_at') and d.get('is_active'):
+        remaining_sec = d.get('duration_hours', 24) * 3600
+        
+    d['remaining_seconds'] = remaining_sec
+    return d
+
+
 def delete_license_key(key_code: str) -> bool:
     """Delete a license key by key_code. Returns True if deleted, False if not found."""
     key_code = key_code.strip()
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('DELETE FROM license_keys WHERE key_code=?', (key_code,))
+    c.execute('DELETE FROM license_keys WHERE UPPER(TRIM(key_code))=UPPER(?)', (key_code,))
     deleted = c.rowcount > 0
     conn.commit()
     conn.close()
+    if deleted:
+        save_backup_file()
     return deleted
 
 

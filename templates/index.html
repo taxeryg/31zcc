@@ -54,6 +54,11 @@
       <button class="pipeline-toggle-btn active" id="pipeline-btn" onclick="togglePipeline()">⚡ Otomatik Yanıt:
         Aktif</button>
 
+      <div class="status-pill" id="license-pill" style="background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.35);color:#b388ff;font-weight:600;display:none;" title="Lisans Kalan Süre">
+        <span>⏱️</span>
+        <span id="license-time-text">Yükleniyor...</span>
+      </div>
+
       <div class="status-pill" onclick="switchTab('chat')">
         <div class="status-dot" id="status-dot"></div>
         <span id="status-text">Bağlı değil</span>

@@ -1766,7 +1766,52 @@ if (typeof socket !== 'undefined') {
   });
 }
 
+// ── License Time Monitor & Auto-Kick ────────
+async function startLicenseMonitor() {
+  const pill = document.getElementById('license-pill');
+  const txt = document.getElementById('license-time-text');
+  if (!pill || !txt) return;
 
+  async function checkLicense() {
+    try {
+      const res = await fetch('/api/license/me');
+      if (res.status === 401) {
+        toast('Lisans anahtarınız silindi veya süresi doldu! Çıkış yapılıyor...', 'error');
+        setTimeout(() => { window.location.href = '/login'; }, 1500);
+        return;
+      }
+      const data = await res.json();
+      if (!data || data.error) {
+        window.location.href = '/login';
+        return;
+      }
 
+      pill.style.display = 'inline-flex';
+      if (data.is_admin) {
+        txt.textContent = 'Admin (Sınırsız)';
+        return;
+      }
 
+      let sec = data.remaining_seconds || 0;
+      if (sec <= 0) {
+        txt.textContent = 'Süre Doldu';
+        setTimeout(() => { window.location.href = '/login'; }, 1200);
+        return;
+      }
 
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      txt.textContent = `${h}s ${m}d ${s}sn`;
+    } catch (e) {
+      console.warn('License check error:', e);
+    }
+  }
+
+  await checkLicense();
+  setInterval(checkLicense, 4000);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  startLicenseMonitor();
+});

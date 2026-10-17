@@ -139,8 +139,13 @@ def auth_guard():
     # Login sayfaları ve API'si serbest
     if request.path in ('/login', '/api/login', '/api/login-key'):
         return
-        
-    # Oturum kontrolü
+
+    # Internal Sync & Discord Bot API (Protected by ADMIN_SECRET)
+    if request.path.startswith('/api/sync/') or request.path == '/api/admin/key-sync':
+        admin_secret = request.headers.get('X-Admin-Secret')
+        if admin_secret and admin_secret == ADMIN_PASSWORD:
+            return
+
     if not session.get('logged_in'):
         if request.path.startswith('/api/'):
             return jsonify({'error': 'Giriş yapmanız gerekiyor', 'auth_required': True}), 401
@@ -204,6 +209,30 @@ def logout():
     return redirect('/login')
 
 
+@app.route('/api/license/me', methods=['GET'])
+def get_current_license():
+    """Returns license details, remaining seconds, and expiration for the current user."""
+    auth_type = session.get('auth_type')
+    if auth_type == 'admin':
+        return jsonify({
+            'is_admin': True,
+            'key_code': 'MASTER_ADMIN',
+            'duration_hours': 99999,
+            'remaining_seconds': 99999999,
+            'expires_at': 'Sınırsız (Admin)',
+            'is_active': 1
+        })
+    license_key = session.get('license_key')
+    if not license_key:
+        return jsonify({'error': 'Lisans anahtarı bulunamadı'}), 401
+    
+    info = storage.get_license_key_info(license_key)
+    if not info or not info.get('is_active'):
+        session.clear()
+        return jsonify({'error': 'Lisans geçersiz veya silinmiş', 'expired': True}), 401
+    return jsonify(info)
+
+
 # ═══════════════════════════════════════════════
 # Persistent Sync Routes
 # ═══════════════════════════════════════════════
@@ -218,6 +247,57 @@ def sync_restore():
     data = request.get_json() or {}
     ok = storage.restore_all_data(data)
     return jsonify({'success': ok})
+
+
+@app.route('/api/admin/key-sync', methods=['POST'])
+def admin_key_sync():
+    """Allows authorized services (e.g. Discord Bot) to sync keys instantly across instances."""
+    secret = request.headers.get('X-Admin-Secret')
+    if secret != ADMIN_PASSWORD:
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    payload = request.get_json() or {}
+    action = payload.get('action')
+    key_code = (payload.get('key_code') or '').strip()
+
+    if action == 'create':
+        duration_hours = int(payload.get('duration_hours', 24))
+        created_by = payload.get('created_by', 'discord_bot')
+        # If key_code specified, insert or ensure it exists
+        if key_code:
+            import sqlite3
+            conn = sqlite3.connect(storage.DB_FILE)
+            c = conn.cursor()
+            c.execute('SELECT id FROM license_keys WHERE UPPER(TRIM(key_code))=UPPER(?)', (key_code,))
+            if not c.fetchone():
+                c.execute('''INSERT INTO license_keys (key_code, duration_hours, is_active, created_by)
+                             VALUES (?, ?, 1, ?)''', (key_code, duration_hours, created_by))
+                conn.commit()
+            conn.close()
+            storage.save_backup_file()
+            return jsonify({'success': True, 'key_code': key_code, 'duration_hours': duration_hours})
+        else:
+            new_key = storage.create_license_key(duration_hours, created_by=created_by)
+            return jsonify({'success': True, 'key_code': new_key, 'duration_hours': duration_hours})
+
+    elif action == 'delete':
+        if not key_code:
+            return jsonify({'error': 'key_code required'}), 400
+        deleted = storage.delete_license_key(key_code)
+        return jsonify({'success': True, 'deleted': deleted})
+
+    elif action == 'purge_all':
+        import sqlite3
+        conn = sqlite3.connect(storage.DB_FILE)
+        c = conn.cursor()
+        c.execute('DELETE FROM license_keys')
+        conn.commit()
+        conn.close()
+        storage.save_backup_file()
+        return jsonify({'success': True, 'message': 'All license keys purged'})
+
+    return jsonify({'error': f'Unknown action: {action}'}), 400
+
 
 
 @app.route('/api/sync/status', methods=['GET'])
