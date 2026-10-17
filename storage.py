@@ -170,6 +170,25 @@ def init_db():
 
     conn.commit()
 
+    # Render / Fresh deploy: Eğer license_keys boşsa varsayılan test/demo keyleri otomatik oluştur
+    try:
+        c.execute('SELECT COUNT(*) FROM license_keys')
+        if c.fetchone()[0] == 0:
+            default_keys = [
+                ('TAXER-VIP2026-PREMIUM', 720, 'render_system'),
+                ('TAXER-DEMO-001', 168, 'render_system'),
+                ('TAXER-0F4494C5-A3AA721C', 720, 'render_system'),
+                ('TAXER-756893ED-AA345DB6', 720, 'render_system'),
+                ('TAXER-775ABAC5-929BCE16', 720, 'render_system'),
+                ('TAXER-B3F29BF6-EBAA98D7', 720, 'render_system'),
+            ]
+            for k, dur, creator in default_keys:
+                c.execute('''INSERT OR IGNORE INTO license_keys (key_code, duration_hours, is_active, created_by)
+                             VALUES (?, ?, 1, ?)''', (k, dur, creator))
+            conn.commit()
+    except Exception as e:
+        logger.warning(f'Seed default keys error: {e}')
+
     # Otomatik geri yükleme: Eğer DB yeni oluşmuşsa ve persistent_storage.json varsa geri yükle
     if os.path.exists(BACKUP_FILE):
         try:
@@ -541,13 +560,25 @@ def export_all_data() -> dict:
     # 4. Settings
     c.execute('SELECT key, value FROM settings')
     settings = {r[0]: r[1] for r in c.fetchall()}
+
+    # 5. License Keys
+    c.execute('SELECT id, key_code, duration_hours, is_active, created_by FROM license_keys')
+    license_keys = []
+    for r in c.fetchall():
+        license_keys.append({
+            'key_code': r[1],
+            'duration_hours': r[2],
+            'is_active': r[3],
+            'created_by': r[4]
+        })
     
     conn.close()
     return {
         'ai_tokens': ai_tokens,
         'kick_accounts': kick_accounts,
         'bots': bots,
-        'settings': settings
+        'settings': settings,
+        'license_keys': license_keys
     }
 
 
@@ -609,6 +640,18 @@ def restore_all_data(data: dict) -> bool:
     # 4. Settings restore
     for k, v in data.get('settings', {}).items():
         c.execute('INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)', (k, v))
+
+    # 5. License Keys restore
+    for lk in data.get('license_keys', []):
+        code = lk.get('key_code')
+        dur = lk.get('duration_hours', 24)
+        active = lk.get('is_active', 1)
+        creator = lk.get('created_by', 'system')
+        if code:
+            c.execute('SELECT id FROM license_keys WHERE key_code=?', (code,))
+            if not c.fetchone():
+                c.execute('''INSERT INTO license_keys (key_code, duration_hours, is_active, created_by)
+                             VALUES (?, ?, ?, ?)''', (code, dur, active, creator))
         
     conn.commit()
     conn.close()
