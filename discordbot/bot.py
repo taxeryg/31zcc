@@ -1915,6 +1915,24 @@ async def keyslist_cmd(interaction: discord.Interaction):
     sys.path.insert(0, str(_DIR.parent))
     try:
         import storage
+        # Remote Render veritabanındaki aktivasyonları ve anahtarları çekip yerel DB ile senkronize et
+        remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
+        admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{remote_url}/api/sync/backup",
+                    headers={"X-Admin-Secret": admin_secret},
+                    timeout=aiohttp.ClientTimeout(total=4)
+                ) as resp:
+                    if resp.status == 200:
+                        remote_data = await resp.json()
+                        remote_keys = remote_data.get('license_keys', [])
+                        if remote_keys:
+                            storage.restore_all_data({'license_keys': remote_keys})
+        except Exception as sync_err:
+            logger.warning(f"[keyslist] Remote sync error: {sync_err}")
+
         keys = storage.get_all_license_keys()
         if not keys:
             await interaction.response.send_message("ℹ️ Henüz oluşturulmuş bir lisans anahtarı yok.", ephemeral=True)
