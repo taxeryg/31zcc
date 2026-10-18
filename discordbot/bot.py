@@ -68,6 +68,31 @@ DEFAULT_CLIENT_TOKEN = "e1393935a959b4020a4491574f6490129f678acdaa92760471263db4
 # ── Security & Channel Configuration ──────────────────────────────────────────
 ADMIN_ROLE_ID    = 1552409518380552224
 ALLOWED_CHANNELS = {1552400779648827454, 1552389420727144509}
+LOG_CHANNEL_ID   = 1561339967278415903
+
+async def send_audit_log(title: str, description: str = "", fields: list = None, color: int = 0x53FC18):
+    """Sends an embed to the designated Discord audit log channel."""
+    try:
+        ch = bot.get_channel(LOG_CHANNEL_ID)
+        if not ch:
+            try:
+                ch = await bot.fetch_channel(LOG_CHANNEL_ID)
+            except Exception:
+                pass
+        if ch:
+            embed = discord.Embed(
+                title=title,
+                description=description,
+                color=color,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_footer(text="Discord Bot & System Audit Log")
+            if fields:
+                for f in fields:
+                    embed.add_field(name=f.get("name"), value=f.get("value"), inline=f.get("inline", True))
+            await ch.send(embed=embed)
+    except Exception as e:
+        logger.debug(f"[send_audit_log] Error: {e}")
 
 # ── Account Creator Config (optional) ─────────────────────────────────────────
 CAPTCHA_API_KEY  = os.getenv("CAPTCHA_API_KEY", "").strip()   # 2captcha.com API key
@@ -2018,11 +2043,77 @@ async def deletekey_cmd(interaction: discord.Interaction, key: str):
             embed.set_footer(text=f"Silen Yetkili: {interaction.user}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             logger.info(f"[deletekey] {interaction.user} deleted license key {clean_key}")
+            await send_audit_log(
+                title="🗑️ Lisans Anahtarı Silindi",
+                fields=[
+                    {"name": "Anahtar", "value": f"`{clean_key}`", "inline": False},
+                    {"name": "Silen Yetkili", "value": interaction.user.mention, "inline": True}
+                ],
+                color=0xE74C3C
+            )
         else:
             await interaction.response.send_message(f"⚠️ **`{clean_key}`** kodlu bir lisans anahtarı bulunamadı (Yerel ve uzaktan silinme sinyali yollandı).", ephemeral=True)
     except Exception as e:
         logger.error(f"[deletekey] Error: {e}")
         await interaction.response.send_message(f"❌ Key silinirken hata: `{e}`", ephemeral=True)
+
+
+# ── Bulk Purge License Keys Command ───────────────────────────────────────────
+@tree.command(name="purgekeys", description="Delete/Purge ALL generated license keys at once (Admin only)", guild=_guild_obj)
+@app_commands.describe(onay="Type 'ONAY' to confirm purging all license keys")
+async def purgekeys_cmd(interaction: discord.Interaction, onay: str):
+    if not is_admin(interaction):
+        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        return
+
+    if onay.strip().upper() != "ONAY":
+        await interaction.response.send_message("⚠️ İşlemi onaylamak için parametreye `ONAY` yazmalısınız!\nÖrnek: `/purgekeys onay:ONAY`", ephemeral=True)
+        return
+
+    sys.path.insert(0, str(_DIR.parent))
+    try:
+        import storage
+        total_local = storage.purge_all_license_keys()
+
+        # Remote sync purge to Render deployment
+        remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
+        admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
+        remote_msg = "Uzak senkronizasyon başarısız"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{remote_url}/api/admin/key-sync",
+                    json={"action": "purge_all"},
+                    headers={"X-Admin-Secret": admin_secret},
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        remote_msg = "Render sunucusu ile senkronize edildi"
+        except Exception as sync_err:
+            remote_msg = f"Hata: {sync_err}"
+
+        embed = discord.Embed(
+            title="💣 Tüm Lisans Anahtarları Silindi",
+            description=f"Veritabanındaki **{total_local}** adet lisans anahtarı toplu olarak silindi ve tüm kullanıcı oturumları sıfırlandı.",
+            color=0xC0392B,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(name="🌐 Uzak Sunucu Durumu", value=f"`{remote_msg}`", inline=False)
+        embed.set_footer(text=f"İşlemi Yapan: {interaction.user}")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        await send_audit_log(
+            title="💣 Toplu Lisans Anahtarı Silme (Purge)",
+            fields=[
+                {"name": "Yetkili", "value": interaction.user.mention, "inline": True},
+                {"name": "Silinen Key Sayısı", "value": f"`{total_local}` Adet", "inline": True},
+                {"name": "Uzak Senkron", "value": f"`{remote_msg}`", "inline": False}
+            ],
+            color=0xC0392B
+        )
+    except Exception as e:
+        logger.error(f"[purgekeys] Error: {e}")
+        await interaction.response.send_message(f"❌ Keyler toplu silinirken hata: `{e}`", ephemeral=True)
 
 
 # ── Discord Live Chat Stream & Reply (Madde 37) ─────────────────────────────

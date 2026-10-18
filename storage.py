@@ -808,11 +808,64 @@ def delete_emote(emote_str: str) -> list[str]:
 
 
 # ──────────────────────────────────────────────
-# License Keys Management (1-IP Protected)
+# License Keys Management (1-IP Protected) & Discord Audit Log
 # ──────────────────────────────────────────────
 
 import secrets
+import threading
+import urllib.request
 from datetime import datetime, timedelta
+
+DISCORD_LOG_CHANNEL_ID = os.getenv("DISCORD_LOG_CHANNEL_ID", "1561339967278415903").strip()
+
+def _get_discord_bot_token() -> str:
+    tok = os.getenv("DISCORD_TOKEN", "").strip()
+    if tok:
+        return tok
+    env_path = os.path.join(_ROOT_DIR, 'discordbot', '.env')
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('DISCORD_TOKEN='):
+                        return line.split('=', 1)[1].strip()
+        except Exception:
+            pass
+    return ""
+
+def send_discord_log(title: str, description: str = "", fields: list = None, color: int = 0x53FC18):
+    """Sends asynchronous audit log embed to Discord channel."""
+    def _post():
+        try:
+            bot_tok = _get_discord_bot_token()
+            if not bot_tok or not DISCORD_LOG_CHANNEL_ID:
+                return
+            url = f"https://discord.com/api/v10/channels/{DISCORD_LOG_CHANNEL_ID}/messages"
+            embed = {
+                "title": title,
+                "description": description,
+                "color": color,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "footer": {"text": "Bot & License Security Log"}
+            }
+            if fields:
+                embed["fields"] = fields
+            payload = json.dumps({"embeds": [embed]}).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={
+                    "Authorization": f"Bot {bot_tok}",
+                    "Content-Type": "application/json",
+                    "User-Agent": "BotAuditLogger (https://kick.com, 1.0)"
+                }
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                pass
+        except Exception as e:
+            logger.debug(f"[send_discord_log] Error: {e}")
+
+    threading.Thread(target=_post, daemon=True).start()
 
 def create_license_key(duration_hours: int, created_by: str = 'discord') -> str:
     """Generate and store a new license key with given duration in hours."""
@@ -824,6 +877,17 @@ def create_license_key(duration_hours: int, created_by: str = 'discord') -> str:
     conn.commit()
     conn.close()
     save_backup_file()
+
+    send_discord_log(
+        title="🔑 Yeni Lisans Anahtarı Üretildi",
+        color=0x3498DB,
+        fields=[
+            {"name": "Anahtar", "value": f"`{key_code}`", "inline": False},
+            {"name": "Süre", "value": f"`{duration_hours}` Saat", "inline": True},
+            {"name": "Oluşturan", "value": f"`{created_by}`", "inline": True},
+            {"name": "Durum", "value": "`Aktivasyon Bekleniyor`", "inline": True}
+        ]
+    )
     return key_code
 
 
@@ -865,6 +929,17 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
         conn.commit()
         conn.close()
         save_backup_file()
+
+        send_discord_log(
+            title="🟢 Lisans Anahtarı Aktifleştirildi (İlk Kullanım)",
+            color=0x2ECC71,
+            fields=[
+                {"name": "Anahtar", "value": f"`{real_key_code}`", "inline": False},
+                {"name": "Kilitlenen IP", "value": f"`{client_ip}`", "inline": True},
+                {"name": "Süre", "value": f"`{duration_hours}` Saat", "inline": True},
+                {"name": "Bitiş Tarihi", "value": f"`{exp_str}`", "inline": True}
+            ]
+        )
         return True, f'Key aktive edildi! Süre: {duration_hours} saat (Bitiş: {exp_str})'
 
     # Check IP Binding (Security Guard)
@@ -878,6 +953,16 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
 
     if bound_ip and _norm_ip(bound_ip) != _norm_ip(client_ip):
         conn.close()
+        send_discord_log(
+            title="⚠️ Lisans IP Uyuşmazlığı (Engellendi)",
+            color=0xE74C3C,
+            fields=[
+                {"name": "Anahtar", "value": f"`{real_key_code}`", "inline": False},
+                {"name": "Kayıtlı IP", "value": f"`{bound_ip}`", "inline": True},
+                {"name": "Deneyen IP", "value": f"`{client_ip}`", "inline": True},
+                {"name": "İşlem", "value": "`Giriş Reddedildi`", "inline": True}
+            ]
+        )
         return False, 'IP Uyuşmazlığı! Bu lisans anahtarı başka bir cihaza/ağa kilitlenmiş.'
 
     # Check HWID Binding if exists
@@ -893,6 +978,15 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
                 c.execute('UPDATE license_keys SET is_active=0 WHERE id=?', (kid,))
                 conn.commit()
                 conn.close()
+                send_discord_log(
+                    title="🔴 Lisans Süresi Doldu",
+                    color=0x95A5A6,
+                    fields=[
+                        {"name": "Anahtar", "value": f"`{real_key_code}`", "inline": False},
+                        {"name": "Kilitli IP", "value": f"`{bound_ip}`", "inline": True},
+                        {"name": "Bitiş Tarihi", "value": f"`{expires_at}`", "inline": True}
+                    ]
+                )
                 return False, f'Lisans süreniz doldu! (Bitiş: {expires_at})'
         except Exception as e:
             logger.error(f'Date parse error: {e}')
@@ -992,7 +1086,37 @@ def delete_license_key(key_code: str) -> bool:
     conn.close()
     if deleted:
         save_backup_file()
+        send_discord_log(
+            title="🗑️ Lisans Anahtarı Silindi",
+            color=0xE74C3C,
+            fields=[
+                {"name": "Anahtar", "value": f"`{key_code}`", "inline": False},
+                {"name": "İşlem", "value": "`Sistemden Kaldırıldı`", "inline": True}
+            ]
+        )
     return deleted
+
+
+def purge_all_license_keys() -> int:
+    """Delete all license keys from database. Returns number of keys deleted."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM license_keys')
+    total = c.fetchone()[0]
+    c.execute('DELETE FROM license_keys')
+    conn.commit()
+    conn.close()
+    save_backup_file()
+
+    send_discord_log(
+        title="⚠️ Tüm Lisans Anahtarları Toplu Olarak Temizlendi",
+        color=0xC0392B,
+        fields=[
+            {"name": "Silinen Key Sayısı", "value": f"`{total}` Adet", "inline": True},
+            {"name": "İşlem", "value": "`Toplu Sıfırlama (Purge All)`", "inline": True}
+        ]
+    )
+    return total
 
 
 # ──────────────────────────────────────────────

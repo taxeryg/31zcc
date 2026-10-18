@@ -1745,10 +1745,33 @@ def follow_status():
 
 
 # ═══════════════════════════════════════════════
+# Global Error Handling & Discord Security Alerts
+# ═══════════════════════════════════════════════
+
+@app.errorhandler(500)
+def handle_internal_server_error(e):
+    client_ip = get_client_ip()
+    owner_key = get_current_owner_key() or "Anonim/Admin"
+    path = request.path
+    storage.send_discord_log(
+        title="🚨 Web Sunucu Hatası (HTTP 500)",
+        color=0xE74C3C,
+        fields=[
+            {"name": "Endpoint", "value": f"`{request.method} {path}`", "inline": True},
+            {"name": "IP Adresi", "value": f"`{client_ip}`", "inline": True},
+            {"name": "Kullanılan Key", "value": f"`{owner_key}`", "inline": True},
+            {"name": "Hata Detayı", "value": f"```{str(e)[:400]}```", "inline": False}
+        ]
+    )
+    return jsonify({'error': 'Sunucu içi hata oluştu', 'details': str(e)}), 500
+
+
+# ═══════════════════════════════════════════════
 # Entry
 # ═══════════════════════════════════════════════
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
+
 
