@@ -131,6 +131,26 @@ def get_current_owner_key():
     return session.get('license_key')
 
 
+def log_user_action(action_name: str, details: dict = None, color: int = 0x3498DB):
+    """Sends user command execution log to Discord audit channel."""
+    owner_key = get_current_owner_key() or (session.get('username') if session.get('logged_in') else 'Anonim/Misafir')
+    client_ip = get_client_ip()
+    fields = [
+        {"name": "🔑 Kullanılan Key / Kullanıcı", "value": f"`{owner_key}`", "inline": True},
+        {"name": "🌐 IP Adresi", "value": f"`{client_ip}`", "inline": True},
+        {"name": "⚡ İşlem", "value": f"`{action_name}`", "inline": True}
+    ]
+    if details:
+        for k, v in details.items():
+            fields.append({"name": str(k), "value": f"`{v}`", "inline": True})
+
+    storage.send_discord_log(
+        title=f"🎮 Web Komut Kullanıldı: {action_name}",
+        color=color,
+        fields=fields
+    )
+
+
 @app.before_request
 def auth_guard():
     # Statik dosyalar serbest
@@ -387,6 +407,12 @@ def connect_channel():
         pipeline.set_chatroom_id(_kick_client.chatroom_id)
         storage.set_setting('channel', channel, owner_key=owner_key)
         storage.set_setting('chatroom_id', str(_kick_client.chatroom_id), owner_key=owner_key)
+
+    log_user_action(
+        action_name="Kick Canlı Yayına Bağlanma",
+        details={"Hedef Kanal": channel, "Chatroom ID": _kick_client.chatroom_id or 'Bilinmiyor'},
+        color=0x2ECC71
+    )
 
     return jsonify({
         'success': True,

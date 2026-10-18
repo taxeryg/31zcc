@@ -147,19 +147,19 @@
     <div class="login-logo">
       <div class="login-logo-icon">🤖</div>
       <h1>TaxerAI <span style="color:#53fc18">Bot</span></h1>
-      <p>1-IP Korumalı Lisans Girişi</p>
+      <p>1-IP Protected License Authentication</p>
     </div>
 
     <div id="login-error" class="login-error"></div>
 
     <form id="login-form" onsubmit="handleLogin(event)">
       <div class="login-group">
-        <label for="license_key">Lisans Anahtarı (Key)</label>
+        <label for="license_key">License Key</label>
         <input type="text" id="license_key" class="login-input" placeholder="TAXER-XXXX-XXXX" required autofocus autocomplete="off">
-        <small style="color:var(--text2); font-size:0.75rem; display:block; margin-top:6px;">⚠️ Giriş yaptığınız IP adresine kilitlenir.</small>
+        <small style="color:var(--text2); font-size:0.75rem; display:block; margin-top:6px;">⚠️ Key will be bound to your client IP upon login.</small>
       </div>
 
-      <button type="submit" id="submit-btn" class="login-btn">Panele Giriş Yap</button>
+      <button type="submit" id="submit-btn" class="login-btn">Sign In to Dashboard</button>
     </form>
   </div>
 
@@ -172,7 +172,7 @@
 
       errBox.style.display = 'none';
       btn.disabled = true;
-      btn.textContent = 'Doğrulanıyor...';
+      btn.textContent = 'Verifying...';
 
       try {
         const res = await fetch('/api/login', {
@@ -186,15 +186,15 @@
           localStorage.setItem('kick_key', keyInput);
           window.location.href = data.redirect || '/';
         } else {
-          errBox.textContent = data.error || 'Giriş başarısız!';
+          errBox.textContent = data.error || 'Authentication failed!';
           errBox.style.display = 'block';
         }
       } catch (err) {
-        errBox.textContent = 'Sunucuya bağlanırken bir hata oluştu.';
+        errBox.textContent = 'Connection error occurred while contacting server.';
         errBox.style.display = 'block';
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Panele Giriş Yap';
+        btn.textContent = 'Sign In to Dashboard';
       }
     }
   </script>

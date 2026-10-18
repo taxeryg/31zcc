@@ -1865,11 +1865,11 @@ async def rolekle(interaction: discord.Interaction, rol: discord.Role):
 async def createkey_cmd(interaction: discord.Interaction, sure: int):
     # Security check: Admin role or guild admin
     if not is_admin(interaction):
-        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        await interaction.response.send_message("❌ Only authorized administrators can use this command!", ephemeral=True)
         return
 
     if sure <= 0:
-        await interaction.response.send_message("❌ Süre en az 1 saat olmalıdır!", ephemeral=True)
+        await interaction.response.send_message("❌ Duration must be at least 1 hour!", ephemeral=True)
         return
 
     # Add parent directory to sys.path to import storage
@@ -1898,22 +1898,22 @@ async def createkey_cmd(interaction: discord.Interaction, sure: int):
             logger.warning(f"[createkey] Remote sync skipped or failed: {sync_err}")
         
         embed = discord.Embed(
-            title="🔑 Yeni Lisans Anahtarı Oluşturuldu",
-            description=f"Web dashboard için **1-IP Korumalı** lisans anahtarı üretildi.",
+            title="🔑 New License Key Created",
+            description=f"Generated **1-IP Protected** license key for the web dashboard.",
             color=0x53FC18,
             timestamp=discord.utils.utcnow()
         )
-        embed.add_field(name="🔑 Lisans Anahtarı", value=f"```{key_code}```", inline=False)
-        embed.add_field(name="⏱️ Geçerlilik Süresi", value=f"`{sure}` Saat", inline=True)
-        embed.add_field(name="🛡️ Koruma", value="`1-IP Kilitli`", inline=True)
-        embed.add_field(name="👤 Oluşturan", value=interaction.user.mention, inline=True)
-        embed.set_footer(text="İlk giriş yapıldığı andan itibaren IP'ye kilitlenir ve süre başlar.")
+        embed.add_field(name="🔑 License Key", value=f"```{key_code}```", inline=False)
+        embed.add_field(name="⏱️ Valid Duration", value=f"`{sure}` Hours", inline=True)
+        embed.add_field(name="🛡️ Protection", value="`1-IP Locked`", inline=True)
+        embed.add_field(name="👤 Created By", value=interaction.user.mention, inline=True)
+        embed.set_footer(text="Key is locked to the client's IP on first login and countdown starts immediately.")
         
         await interaction.response.send_message(embed=embed)
         logger.info(f"[createkey] {interaction.user} created key {key_code} ({sure}h)")
     except Exception as e:
         logger.error(f"[createkey] Error: {e}")
-        await interaction.response.send_message(f"❌ Key oluşturulurken hata: `{e}`", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error generating license key: `{e}`", ephemeral=True)
 
 
 
@@ -1921,26 +1921,26 @@ async def createkey_cmd(interaction: discord.Interaction, sure: int):
 @tree.command(name="backupdb", description="Send live botdash.db backup directly to Discord (Admin only)", guild=_guild_obj)
 async def backupdb_cmd(interaction: discord.Interaction):
     if not is_admin(interaction):
-        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        await interaction.response.send_message("❌ Only authorized administrators can use this command!", ephemeral=True)
         return
     db_path = _DIR.parent / "botdash.db"
     if not db_path.exists():
-        await interaction.response.send_message("❌ Veritabanı dosyası bulunamadı!", ephemeral=True)
+        await interaction.response.send_message("❌ Database backup file not found!", ephemeral=True)
         return
     file = discord.File(str(db_path), filename="botdash_backup.db")
-    await interaction.response.send_message("📦 Canlı Veritabanı Yedeği:", file=file, ephemeral=True)
+    await interaction.response.send_message("📦 Live Database Backup:", file=file, ephemeral=True)
 
 
 # ── Key List & Check Command (Madde 89 & 91) ─────────────────────────────────
 @tree.command(name="keyslist", description="List all generated license keys and expiration times (Admin only)", guild=_guild_obj)
 async def keyslist_cmd(interaction: discord.Interaction):
     if not is_admin(interaction):
-        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        await interaction.response.send_message("❌ Only authorized administrators can use this command!", ephemeral=True)
         return
     sys.path.insert(0, str(_DIR.parent))
     try:
         import storage
-        # Remote Render veritabanındaki aktivasyonları ve anahtarları çekip yerel DB ile senkronize et
+        # Remote sync
         remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
         admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
         try:
@@ -1960,12 +1960,12 @@ async def keyslist_cmd(interaction: discord.Interaction):
 
         keys = storage.get_all_license_keys()
         if not keys:
-            await interaction.response.send_message("ℹ️ Henüz oluşturulmuş bir lisans anahtarı yok.", ephemeral=True)
+            await interaction.response.send_message("ℹ️ No license keys generated yet.", ephemeral=True)
             return
 
         embed = discord.Embed(
-            title="🔑 Lisans Anahtarları ve Kullanım Durumu",
-            description=f"Toplam **{len(keys)}** adet lisans anahtarı kayıtlı.",
+            title="🔑 License Keys & Usage Status",
+            description=f"Total **{len(keys)}** license key(s) registered.",
             color=0x53FC18,
             timestamp=discord.utils.utcnow()
         )
@@ -1973,23 +1973,23 @@ async def keyslist_cmd(interaction: discord.Interaction):
         for k in keys[:25]:  # Discord embed field limit: 25
             is_used = bool(k.get('bound_ip') or k.get('activated_at'))
             if not k.get('is_active'):
-                status_icon = "🔴 Süresi Dolmuş / İptal"
+                status_icon = "🔴 Expired / Revoked"
             elif is_used:
-                status_icon = "🟢 Kullanılıyor (Aktif)"
+                status_icon = "🟢 In Use (Active)"
             else:
-                status_icon = "🟡 Henüz Kullanılmadı (Bekliyor)"
+                status_icon = "🟡 Not Used Yet (Pending)"
 
-            ip_txt = f"`{k.get('bound_ip')}`" if k.get('bound_ip') else "*Girilmedi (Boşta)*"
-            act_txt = k.get('activated_at') or "*Aktivasyon Bekleniyor*"
-            exp_txt = k.get('expires_at') or f"{k.get('duration_hours', 24)} Saat (Süre başlamadı)"
-            created_by = k.get('created_by') or 'Bilinmiyor'
+            ip_txt = f"`{k.get('bound_ip')}`" if k.get('bound_ip') else "*None (Unbound)*"
+            act_txt = k.get('activated_at') or "*Awaiting Activation*"
+            exp_txt = k.get('expires_at') or f"{k.get('duration_hours', 24)} Hours (Countdown not started)"
+            created_by = k.get('created_by') or 'Unknown'
 
             field_value = (
-                f"**Durum:** {status_icon}\n"
-                f"**Kilitli IP:** {ip_txt}\n"
-                f"**Aktivasyon:** {act_txt}\n"
-                f"**Bitiş Tarihi:** `{exp_txt}`\n"
-                f"**Oluşturan:** `{created_by}`"
+                f"**Status:** {status_icon}\n"
+                f"**Bound IP:** {ip_txt}\n"
+                f"**Activated:** {act_txt}\n"
+                f"**Expiration:** `{exp_txt}`\n"
+                f"**Creator:** `{created_by}`"
             )
 
             embed.add_field(
@@ -2001,7 +2001,7 @@ async def keyslist_cmd(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
     except Exception as e:
         logger.error(f"[keyslist] Error: {e}")
-        await interaction.response.send_message(f"❌ Anahtarlar listelenirken hata: `{e}`", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error listing keys: `{e}`", ephemeral=True)
 
 
 # ── Delete License Key Command ──────────────────────────────────────────────
@@ -2009,7 +2009,7 @@ async def keyslist_cmd(interaction: discord.Interaction):
 @app_commands.describe(key="The license key code to delete (e.g. TAXER-XXXX-XXXX)")
 async def deletekey_cmd(interaction: discord.Interaction, key: str):
     if not is_admin(interaction):
-        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        await interaction.response.send_message("❌ Only authorized administrators can use this command!", ephemeral=True)
         return
 
     clean_key = key.strip()
@@ -2035,39 +2035,39 @@ async def deletekey_cmd(interaction: discord.Interaction, key: str):
 
         if deleted:
             embed = discord.Embed(
-                title="🗑️ Lisans Anahtarı Silindi",
-                description=f"**`{clean_key}`** anahtarı başarıyla sistemden silindi ve yetkisi kaldırıldı.",
+                title="🗑️ License Key Deleted",
+                description=f"**`{clean_key}`** was successfully deleted and revoked.",
                 color=0xFF3333,
                 timestamp=discord.utils.utcnow()
             )
-            embed.set_footer(text=f"Silen Yetkili: {interaction.user}")
+            embed.set_footer(text=f"Revoked by: {interaction.user}")
             await interaction.response.send_message(embed=embed, ephemeral=True)
             logger.info(f"[deletekey] {interaction.user} deleted license key {clean_key}")
             await send_audit_log(
-                title="🗑️ Lisans Anahtarı Silindi",
+                title="🗑️ License Key Revoked",
                 fields=[
-                    {"name": "Anahtar", "value": f"`{clean_key}`", "inline": False},
-                    {"name": "Silen Yetkili", "value": interaction.user.mention, "inline": True}
+                    {"name": "License Key", "value": f"`{clean_key}`", "inline": False},
+                    {"name": "Revoked By", "value": interaction.user.mention, "inline": True}
                 ],
                 color=0xE74C3C
             )
         else:
-            await interaction.response.send_message(f"⚠️ **`{clean_key}`** kodlu bir lisans anahtarı bulunamadı (Yerel ve uzaktan silinme sinyali yollandı).", ephemeral=True)
+            await interaction.response.send_message(f"⚠️ License key **`{clean_key}`** was not found (revocation broadcast sent).", ephemeral=True)
     except Exception as e:
         logger.error(f"[deletekey] Error: {e}")
-        await interaction.response.send_message(f"❌ Key silinirken hata: `{e}`", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error deleting license key: `{e}`", ephemeral=True)
 
 
 # ── Bulk Purge License Keys Command ───────────────────────────────────────────
 @tree.command(name="purgekeys", description="Delete/Purge ALL generated license keys at once (Admin only)", guild=_guild_obj)
-@app_commands.describe(onay="Type 'ONAY' to confirm purging all license keys")
-async def purgekeys_cmd(interaction: discord.Interaction, onay: str):
+@app_commands.describe(confirm="Type 'CONFIRM' to purge all license keys")
+async def purgekeys_cmd(interaction: discord.Interaction, confirm: str):
     if not is_admin(interaction):
-        await interaction.response.send_message("❌ Bu komutu yalnızca yetkililer kullanabilir!", ephemeral=True)
+        await interaction.response.send_message("❌ Only authorized administrators can use this command!", ephemeral=True)
         return
 
-    if onay.strip().upper() != "ONAY":
-        await interaction.response.send_message("⚠️ İşlemi onaylamak için parametreye `ONAY` yazmalısınız!\nÖrnek: `/purgekeys onay:ONAY`", ephemeral=True)
+    if confirm.strip().upper() not in ("CONFIRM", "ONAY"):
+        await interaction.response.send_message("⚠️ You must pass `confirm:CONFIRM` to execute this bulk purge!\nExample: `/purgekeys confirm:CONFIRM`", ephemeral=True)
         return
 
     sys.path.insert(0, str(_DIR.parent))
@@ -2078,7 +2078,7 @@ async def purgekeys_cmd(interaction: discord.Interaction, onay: str):
         # Remote sync purge to Render deployment
         remote_url = os.getenv("RENDER_WEB_URL", "https://three1zcc.onrender.com").rstrip("/")
         admin_secret = os.getenv("ADMIN_PASSWORD", "ege123")
-        remote_msg = "Uzak senkronizasyon başarısız"
+        remote_msg = "Remote sync failed"
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -2088,32 +2088,32 @@ async def purgekeys_cmd(interaction: discord.Interaction, onay: str):
                     timeout=aiohttp.ClientTimeout(total=5)
                 ) as resp:
                     if resp.status == 200:
-                        remote_msg = "Render sunucusu ile senkronize edildi"
+                        remote_msg = "Synced with Render cloud instance"
         except Exception as sync_err:
-            remote_msg = f"Hata: {sync_err}"
+            remote_msg = f"Error: {sync_err}"
 
         embed = discord.Embed(
-            title="💣 Tüm Lisans Anahtarları Silindi",
-            description=f"Veritabanındaki **{total_local}** adet lisans anahtarı toplu olarak silindi ve tüm kullanıcı oturumları sıfırlandı.",
+            title="💣 All License Keys Purged",
+            description=f"Successfully purged **{total_local}** license key(s) and cleared active user sessions.",
             color=0xC0392B,
             timestamp=discord.utils.utcnow()
         )
-        embed.add_field(name="🌐 Uzak Sunucu Durumu", value=f"`{remote_msg}`", inline=False)
-        embed.set_footer(text=f"İşlemi Yapan: {interaction.user}")
+        embed.add_field(name="🌐 Remote Deployment Status", value=f"`{remote_msg}`", inline=False)
+        embed.set_footer(text=f"Purged by: {interaction.user}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
         await send_audit_log(
-            title="💣 Toplu Lisans Anahtarı Silme (Purge)",
+            title="💣 Bulk License Key Purge Executed",
             fields=[
-                {"name": "Yetkili", "value": interaction.user.mention, "inline": True},
-                {"name": "Silinen Key Sayısı", "value": f"`{total_local}` Adet", "inline": True},
-                {"name": "Uzak Senkron", "value": f"`{remote_msg}`", "inline": False}
+                {"name": "Admin", "value": interaction.user.mention, "inline": True},
+                {"name": "Keys Purged", "value": f"`{total_local}` Keys", "inline": True},
+                {"name": "Cloud Sync", "value": f"`{remote_msg}`", "inline": False}
             ],
             color=0xC0392B
         )
     except Exception as e:
         logger.error(f"[purgekeys] Error: {e}")
-        await interaction.response.send_message(f"❌ Keyler toplu silinirken hata: `{e}`", ephemeral=True)
+        await interaction.response.send_message(f"❌ Error purging license keys: `{e}`", ephemeral=True)
 
 
 # ── Discord Live Chat Stream & Reply (Madde 37) ─────────────────────────────

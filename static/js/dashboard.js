@@ -1078,7 +1078,7 @@ function renderLogs(logs) {
   const el = document.getElementById('logs-body');
   if (!el) return;
   if (!logs.length) {
-    el.innerHTML = '<div class="text-muted text-sm" style="padding:12px">Log yok.</div>';
+    el.innerHTML = '<div class="text-muted text-sm" style="padding:12px">No activity logs recorded yet.</div>';
     return;
   }
   el.innerHTML = logs.map(l => {
@@ -1101,10 +1101,10 @@ function renderLogs(logs) {
 }
 
 async function clearLogs() {
-  if (!confirm('Tüm loglar silinsin mi?')) return;
+  if (!confirm('Clear all logs?')) return;
   await api('POST', '/api/logs/clear');
   renderLogs([]);
-  toast('Loglar temizlendi', 'info');
+  toast('Logs cleared successfully', 'info');
 }
 
 // ── Bearer Token Batch Test ─────────────────
@@ -1776,7 +1776,7 @@ async function startLicenseMonitor() {
     try {
       const res = await fetch('/api/license/me');
       if (res.status === 401) {
-        toast('Lisans anahtarınız silindi veya süresi doldu! Çıkış yapılıyor...', 'error');
+        toast('Your license key has expired or been revoked! Redirecting...', 'error');
         setTimeout(() => { window.location.href = '/login'; }, 1500);
         return;
       }
@@ -1788,13 +1788,13 @@ async function startLicenseMonitor() {
 
       pill.style.display = 'inline-flex';
       if (data.is_admin) {
-        txt.textContent = 'Admin (Sınırsız)';
+        txt.textContent = 'Admin (Unlimited)';
         return;
       }
 
       let sec = data.remaining_seconds || 0;
       if (sec <= 0) {
-        txt.textContent = 'Süre Doldu';
+        txt.textContent = 'Expired';
         setTimeout(() => { window.location.href = '/login'; }, 1200);
         return;
       }
@@ -1802,7 +1802,7 @@ async function startLicenseMonitor() {
       const h = Math.floor(sec / 3600);
       const m = Math.floor((sec % 3600) / 60);
       const s = sec % 60;
-      txt.textContent = `${h}s ${m}d ${s}sn`;
+      txt.textContent = `${h}h ${m}m ${s}s`;
     } catch (e) {
       console.warn('License check error:', e);
     }

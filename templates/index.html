@@ -51,17 +51,16 @@
 
       <div class="header-spacer"></div>
 
-      <button class="pipeline-toggle-btn active" id="pipeline-btn" onclick="togglePipeline()">⚡ Otomatik Yanıt:
-        Aktif</button>
+      <button class="pipeline-toggle-btn active" id="pipeline-btn" onclick="togglePipeline()">⚡ Auto-Reply: Active</button>
 
-      <div class="status-pill" id="license-pill" style="background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.35);color:#b388ff;font-weight:600;display:none;" title="Lisans Kalan Süre">
+      <div class="status-pill" id="license-pill" style="background:rgba(124,58,237,0.15);border:1px solid rgba(124,58,237,0.35);color:#b388ff;font-weight:600;display:none;" title="License Remaining Time">
         <span>⏱️</span>
-        <span id="license-time-text">Yükleniyor...</span>
+        <span id="license-time-text">Loading...</span>
       </div>
 
       <div class="status-pill" onclick="switchTab('chat')">
         <div class="status-dot" id="status-dot"></div>
-        <span id="status-text">Bağlı değil</span>
+        <span id="status-text">Disconnected</span>
       </div>
     </header>
 
@@ -73,25 +72,25 @@
         <div class="nav-item active" id="nav-chat" onclick="switchTab('chat')" title="Chat">
           <span class="nav-icon">💬</span>
         </div>
-        <div class="nav-item" id="nav-bots" onclick="switchTab('bots')" title="Botlar">
+        <div class="nav-item" id="nav-bots" onclick="switchTab('bots')" title="Bots">
           <span class="nav-icon">🤖</span>
         </div>
-        <div class="nav-item" id="nav-tokens" onclick="switchTab('tokens')" title="Token Yönetimi">
+        <div class="nav-item" id="nav-tokens" onclick="switchTab('tokens')" title="Token Management">
           <span class="nav-icon">🔑</span>
         </div>
-        <div class="nav-item" id="nav-logs" onclick="switchTab('logs');loadLogs()" title="Loglar">
+        <div class="nav-item" id="nav-logs" onclick="switchTab('logs');loadLogs()" title="Logs">
           <span class="nav-icon">📋</span>
         </div>
-        <div class="nav-item" id="nav-bearer-test" onclick="switchTab('bearer-test')" title="Toplu Token Testi">
+        <div class="nav-item" id="nav-bearer-test" onclick="switchTab('bearer-test')" title="Bulk Token Tester">
           <span class="nav-icon">🧪</span>
         </div>
-        <div class="nav-item" id="nav-hesapolustur" onclick="switchTab('hesapolustur')" title="Hesap Oluştur">
+        <div class="nav-item" id="nav-hesapolustur" onclick="switchTab('hesapolustur')" title="Account Creator">
           <span class="nav-icon">👤➕</span>
         </div>
         <div class="nav-item" id="nav-viewbot" onclick="switchTab('viewbot')" title="ViewBot">
           <span class="nav-icon">👁️</span>
         </div>
-        <div class="nav-item" id="nav-follow" onclick="switchTab('follow')" title="Takipçi Gönder">
+        <div class="nav-item" id="nav-follow" onclick="switchTab('follow')" title="Follower Sender">
           <span class="nav-icon">👤⚡</span>
         </div>
       </nav>
