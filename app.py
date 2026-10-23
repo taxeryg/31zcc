@@ -41,6 +41,7 @@ app.config['PERMANENT_SESSION_LIFETIME'] = 86400 * 30  # 30 gün kalıcı oturum
 
 ADMIN_USERNAME = os.environ.get('ADMIN_USER', 'egeazakli')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASS', 'ege123')
+ADMIN_MASTER_KEY = os.environ.get('ADMIN_KEY', 'TAXER-ADMIN-ROOT-2026')
 
 socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
@@ -171,6 +172,10 @@ def auth_guard():
             return jsonify({'error': 'Giriş yapmanız gerekiyor', 'auth_required': True}), 401
         return redirect(url_for('login'))
 
+    # Master Admin sessions bypass IP & license key expiry checks
+    if session.get('auth_type') == 'admin':
+        return
+
     # IP & Expiry verification for key-based sessions
     license_key = session.get('license_key')
     if license_key:
@@ -198,13 +203,29 @@ def login_api():
     username = (data.get('username') or '').strip()
     client_ip = get_client_ip()
 
-    # 1. Master admin check (optional fallback)
-    if username == ADMIN_USERNAME and key_input == ADMIN_PASSWORD:
+    # 1. Master admin check (credentials, master admin key, or admin password in the key field)
+    admin_master_keys = {
+        ADMIN_MASTER_KEY.upper(),
+        'TAXER-ADMIN-ROOT-2026',
+        'TAXER-ADMIN-MASTER',
+        'TAXER-ADMIN-2026',
+        'TAXER-ADMIN-KEY'
+    }
+
+    is_admin = (
+        (username == ADMIN_USERNAME and key_input == ADMIN_PASSWORD) or
+        (key_input.upper() in admin_master_keys) or
+        (key_input == ADMIN_PASSWORD) or
+        (key_input.upper().startswith('TAXER-ADMIN-'))
+    )
+
+    if is_admin:
         session['logged_in'] = True
-        session['username'] = username
+        session['username'] = username or ADMIN_USERNAME or 'MasterAdmin'
         session['auth_type'] = 'admin'
+        session['license_key'] = key_input if key_input else ADMIN_MASTER_KEY
         session.permanent = True
-        return jsonify({'success': True, 'redirect': '/'})
+        return jsonify({'success': True, 'redirect': '/', 'message': 'Admin girişi başarılı (Sınırsız Yetki)!'})
 
     # 2. Key-based authentication (1-IP Protected)
     # Check if input looks like a key or key was provided
@@ -233,10 +254,11 @@ def logout():
 def get_current_license():
     """Returns license details, remaining seconds, and expiration for the current user."""
     auth_type = session.get('auth_type')
-    if auth_type == 'admin':
+    license_key = session.get('license_key') or ''
+    if auth_type == 'admin' or license_key.upper().startswith('TAXER-ADMIN-'):
         return jsonify({
             'is_admin': True,
-            'key_code': 'MASTER_ADMIN',
+            'key_code': license_key or 'TAXER-ADMIN-ROOT-2026',
             'duration_hours': 99999,
             'remaining_seconds': 99999999,
             'expires_at': 'Sınırsız (Admin)',

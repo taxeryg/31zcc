@@ -872,6 +872,13 @@ def send_discord_log(title: str, description: str = "", fields: list = None, col
 
     threading.Thread(target=_post, daemon=True).start()
 
+ADMIN_MASTER_KEYS = {
+    'TAXER-ADMIN-ROOT-2026',
+    'TAXER-ADMIN-MASTER',
+    'TAXER-ADMIN-2026',
+    'TAXER-ADMIN-KEY'
+}
+
 def create_license_key(duration_hours: int, created_by: str = 'discord') -> str:
     """Generate and store a new license key with given duration in hours."""
     key_code = f"TAXER-{secrets.token_hex(4).upper()}-{secrets.token_hex(4).upper()}"
@@ -904,6 +911,10 @@ def validate_license_key(key_code: str, client_ip: str, client_hwid: str = None)
     key_code = key_code.strip()
     if not key_code:
         return False, 'Key cannot be empty'
+
+    # Master Admin Key Bypass: Always valid, works from all IPs, devices, and never expires
+    if key_code.upper() in ADMIN_MASTER_KEYS or key_code.upper().startswith('TAXER-ADMIN-'):
+        return True, 'Admin Master License (Universal & Unlimited)'
 
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -1058,6 +1069,20 @@ def get_license_key_info(key_code: str):
     if not key_code:
         return None
     key_code = key_code.strip()
+    if key_code.upper() in ADMIN_MASTER_KEYS or key_code.upper().startswith('TAXER-ADMIN-'):
+        return {
+            'id': 0,
+            'key_code': key_code.upper(),
+            'duration_hours': 999999,
+            'created_at': '2026-01-01 00:00:00',
+            'activated_at': '2026-01-01 00:00:00',
+            'expires_at': 'Sınırsız (Admin)',
+            'bound_ip': 'Tüm IPler (Admin)',
+            'is_active': 1,
+            'created_by': 'admin',
+            'remaining_seconds': 99999999,
+            'is_admin': True
+        }
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute('''SELECT id, key_code, duration_hours, created_at, activated_at, expires_at, bound_ip, is_active, created_by
